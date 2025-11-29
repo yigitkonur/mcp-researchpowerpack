@@ -64,14 +64,24 @@ export async function handleWebSearch(
       markdown += `---\n\n`;
     }
 
-    markdown += `## 📊 Full Search Results by Query\n\n`;
+    // Limit output based on number of queries to keep under ~20k tokens
+    const MAX_QUERIES_SHOWN = 15;
+    const MAX_RESULTS_PER_QUERY = response.totalKeywords > 10 ? 5 : 10;
+    const queriesToShow = response.searches.slice(0, MAX_QUERIES_SHOWN);
+    const queriesOmitted = response.searches.length - queriesToShow.length;
+
+    markdown += `## 📊 Full Search Results by Query`;
+    if (queriesOmitted > 0) {
+      markdown += ` (showing ${queriesToShow.length} of ${response.searches.length})`;
+    }
+    markdown += `\n\n`;
 
     let totalResults = 0;
 
-    response.searches.forEach((search, index) => {
+    queriesToShow.forEach((search, index) => {
       markdown += `### Query ${index + 1}: "${search.keyword}"\n\n`;
 
-      search.results.slice(0, 10).forEach((result, resultIndex) => {
+      search.results.slice(0, MAX_RESULTS_PER_QUERY).forEach((result, resultIndex) => {
         const position = resultIndex + 1;
         const positionScore = getPositionScore(position);
 
@@ -86,8 +96,8 @@ export async function handleWebSearch(
 
         if (result.snippet) {
           let snippet = result.snippet;
-          if (snippet.length > 200) {
-            snippet = snippet.substring(0, 200) + '...';
+          if (snippet.length > 150) {
+            snippet = snippet.substring(0, 147) + '...';
           }
 
           if (result.date) {
@@ -103,17 +113,21 @@ export async function handleWebSearch(
 
       if (search.related && search.related.length > 0) {
         const relatedSuggestions = search.related
-          .slice(0, 8)
+          .slice(0, 5)
           .map((r: string) => `\`${r}\``)
           .join(', ');
 
-        markdown += `*Related searches:* ${relatedSuggestions}\n\n`;
+        markdown += `*Related:* ${relatedSuggestions}\n\n`;
       }
 
-      if (index < response.searches.length - 1) {
+      if (index < queriesToShow.length - 1) {
         markdown += `---\n\n`;
       }
     });
+
+    if (queriesOmitted > 0) {
+      markdown += `\n---\n\n> *${queriesOmitted} additional queries not shown. Consensus URLs above include all ${response.searches.length} queries.*\n`;
+    }
 
     const executionTime = Date.now() - startTime;
 
