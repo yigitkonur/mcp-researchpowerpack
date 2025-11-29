@@ -71,6 +71,7 @@ jobs:
           git push
           git push --tags
           echo "Auto-bumped to $(node -p "require('./package.json').version")"
+          echo "version_bumped=true" >> $GITHUB_ENV
 
       - name: Manual Version Bump
         if: ${{ inputs.bump != '' }}
@@ -80,9 +81,10 @@ jobs:
           npm version ${{ inputs.bump }} -m "release: %s [skip ci]"
           git push
           git push --tags
+          echo "version_bumped=true" >> $GITHUB_ENV
 
       - name: Publish to NPM
-        if: steps.version_check.outputs.version_exists == 'false' || inputs.bump != ''
+        if: steps.version_check.outputs.version_exists == 'false' || env.version_bumped == 'true'
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
