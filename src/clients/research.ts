@@ -11,6 +11,7 @@ export interface ResearchParams {
   systemPrompt?: string;
   reasoningEffort?: 'low' | 'medium' | 'high';
   maxSearchResults?: number;
+  maxTokens?: number;
   temperature?: number;
   responseFormat?: { type: 'json_object' | 'text' };
 }
@@ -57,6 +58,7 @@ export class ResearchClient {
       systemPrompt,
       reasoningEffort = RESEARCH.REASONING_EFFORT,
       maxSearchResults = RESEARCH.MAX_URLS,
+      maxTokens = 32000,
       temperature = 0.3,
       responseFormat,
     } = params;
@@ -72,7 +74,7 @@ export class ResearchClient {
       messages,
       temperature,
       reasoning_effort: reasoningEffort,
-      max_completion_tokens: 32000,
+      max_completion_tokens: maxTokens,
       search_parameters: {
         mode: 'on',
         max_search_results: Math.min(maxSearchResults, 30),

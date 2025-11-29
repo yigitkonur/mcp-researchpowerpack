@@ -70,13 +70,25 @@ export const TOOLS = [
   // === DEEP RESEARCH TOOL ===
   {
     name: 'deep_research',
-    description: `**WHEN:** You need deep understanding, validation, or multi-perspective analysis on ANY topic — use when uncertain about concepts, need current information beyond your training, or require evidence-based decision making.
+    description: `**Batch deep research (2-10 questions) with dynamic token allocation.**
 
-**WHAT:** Expert consultant research across technical docs, industry blogs, academic sources, and case studies covering both technical topics (algorithms, protocols, architecture philosophy, framework comparisons) and non-technical domains (market trends, business strategy, process optimization, competitive analysis).
+**TOKEN BUDGET:** 32,000 tokens distributed across all questions:
+- 2 questions: 16,000 tokens/question (deep dive)
+- 5 questions: 6,400 tokens/question (balanced)
+- 10 questions: 3,200 tokens/question (rapid multi-topic)
 
-**INCLUDE:** Precise topic with full context (why this matters, what decision it informs), 3-7 specific questions you need answered, your current understanding or assumptions (to fill gaps not repeat basics), desired depth level, any constraints or priorities, and use file_attachments if research relates to existing codebase or documents.
+**WHEN TO USE:**
+- Need multi-perspective analysis on related topics
+- Researching a domain from multiple angles
+- Validating understanding across different aspects
+- Comparing approaches/technologies side-by-side
 
-**USE:** Aggressively when you think "I'm not 100% confident," "is my understanding current?", "what are the trade-offs?", or when evaluating technologies, learning complex systems, understanding best practices, or researching any domain knowledge.`,
+**EACH QUESTION SHOULD INCLUDE:**
+- Topic & context (what decision it informs)
+- Your current understanding (to fill gaps)
+- Specific sub-questions (2-5 per topic)
+
+**USE:** Maximize question count for comprehensive coverage. All questions run in parallel. Group related questions for coherent research.`,
     inputSchema: zodToJsonSchema(deepResearchParamsSchema, { $refStrategy: 'none' }),
   },
 

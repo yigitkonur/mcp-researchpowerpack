@@ -1,99 +1,160 @@
 /**
- * Deep Research Tool Handler
+ * Deep Research Tool Handler - Batch processing with dynamic token allocation
  */
 
 import type { DeepResearchParams } from '../schemas/deep-research.js';
-import { ResearchClient } from '../clients/research.js';
+import { ResearchClient, type ResearchResponse } from '../clients/research.js';
 import { FileAttachmentService } from '../services/file-attachment.js';
 import { RESEARCH } from '../config/index.js';
 import { createSimpleError } from '../utils/errors.js';
+
+// Constants
+const TOTAL_TOKEN_BUDGET = 32000;
+const MIN_QUESTIONS = 2;
+const MAX_QUESTIONS = 10;
 
 interface ResearchOptions {
   sessionId?: string;
   logger?: (level: 'info' | 'error' | 'debug', message: string, sessionId: string) => Promise<void>;
 }
 
-const SYSTEM_PROMPT = `You are an expert research consultant with unlimited reasoning capacity and access to comprehensive information sources. Your task is to provide evidence-based, multi-perspective analysis on ANY topic (technical or non-technical).
+interface QuestionResult {
+  question: string;
+  content: string;
+  success: boolean;
+  error?: string;
+  tokensUsed?: number;
+}
 
-RESEARCH METHODOLOGY:
-1. SOURCE DIVERSITY: Official documentation, academic papers, engineering blogs, case studies, industry reports, expert opinions
-2. CURRENT + HISTORICAL: Latest developments AND foundational context - show evolution of thinking
-3. MULTIPLE PERSPECTIVES: Present different schools of thought, competing approaches, and their proponents
-4. EVIDENCE-BASED: Every claim backed by citations - who said it, where, when, and why they're credible
-5. CHALLENGE ASSUMPTIONS: Question common wisdom, identify where conventional thinking is outdated
-6. PRACTICAL + THEORETICAL: Balance academic rigor with real-world applicability
-7. CONTRARIAN VIEWS: Include minority opinions that may be valuable - don't just report consensus
+function calculateTokenAllocation(questionCount: number): number {
+  return Math.floor(TOTAL_TOKEN_BUDGET / questionCount);
+}
 
-You have UNLIMITED THINKING TOKENS - use them to reason deeply about:
-- What the core question is really asking (beyond surface level)
-- How different domains approach similar problems
-- What recent developments have changed the landscape
-- Where expert consensus exists and where it doesn't
-- What trade-offs exist between competing approaches
-- How theory translates to practice
+const SYSTEM_PROMPT = `You are an expert research consultant. Provide evidence-based, multi-perspective analysis.
 
-FINAL ANSWER FORMAT (high info density, comprehensive but concise):
-- CURRENT STATE: [What's the status quo? What do we know?]
-- KEY INSIGHTS: [Most important findings - backed by evidence]
-- PERSPECTIVES: [Different approaches/schools of thought with pros/cons]
-- TRADE-OFFS: [Honest analysis of competing priorities]
-- PRACTICAL IMPLICATIONS: [How this applies in real scenarios]
-- WHAT'S CHANGING: [Recent developments and future directions]
-- CONSENSUS VS DEBATE: [Where experts agree and where they don't]
+METHODOLOGY:
+- SOURCE DIVERSITY: Official docs, papers, blogs, case studies
+- CURRENT + HISTORICAL: Latest developments AND context
+- MULTIPLE PERSPECTIVES: Different approaches with pros/cons
+- EVIDENCE-BASED: Claims backed by citations
 
-Max 2000 words final answer. Dense with insights, light on filler. Use examples, data, and citations. Structure with clear sections. NO platitudes, NO stating the obvious, NO repeating back what was asked.`;
+FORMAT (high info density):
+- CURRENT STATE: Status quo, what we know
+- KEY INSIGHTS: Most important findings with evidence
+- TRADE-OFFS: Competing priorities honestly analyzed
+- PRACTICAL IMPLICATIONS: Real-world application
+- WHAT'S CHANGING: Recent developments
+
+Be dense with insights, light on filler. Use examples and citations.`;
 
 export async function handleDeepResearch(
   params: DeepResearchParams,
   options: ResearchOptions = {}
 ): Promise<{ content: string; structuredContent: object }> {
   const { sessionId, logger } = options;
+  const questions = params.questions;
 
-  try {
-    if (sessionId && logger) {
-      await logger('info', `Starting deep research: "${params.deep_research_question.substring(0, 100)}..." (30min max timeout)`, sessionId);
-    }
-
-    // Process file attachments
-    let enhancedQuestion = params.deep_research_question;
-    if (params.file_attachments && params.file_attachments.length > 0) {
-      if (sessionId && logger) {
-        await logger('info', `Processing ${params.file_attachments.length} file attachment(s)...`, sessionId);
-      }
-      const fileService = new FileAttachmentService();
-      const attachmentsMarkdown = await fileService.formatAttachments(params.file_attachments);
-      enhancedQuestion = params.deep_research_question + attachmentsMarkdown;
-    }
-
-    const client = new ResearchClient();
-    const response = await client.research({
-      question: enhancedQuestion,
-      systemPrompt: SYSTEM_PROMPT,
-      reasoningEffort: RESEARCH.REASONING_EFFORT,
-      maxSearchResults: RESEARCH.MAX_URLS,
-    });
-
-    if (sessionId && logger && response.usage) {
-      await logger('info', `Research completed: ${response.usage.totalTokens.toLocaleString()} tokens`, sessionId);
-    }
-
-    return { content: response.content, structuredContent: response };
-  } catch (error) {
-    const simpleError = createSimpleError(error);
-
-    if (sessionId && logger) {
-      await logger('error', simpleError.message, sessionId);
-    }
-
+  // Validation
+  if (questions.length < MIN_QUESTIONS) {
     return {
-      content: `Error: ${simpleError.message}`,
-      structuredContent: {
-        content: `Error: ${simpleError.message}`,
-        metadata: { id: 'error', model: 'error', created: Date.now() },
-        error: true,
-        code: simpleError.code,
-        message: simpleError.message,
-      },
+      content: `# ❌ Error\n\nMinimum ${MIN_QUESTIONS} research questions required. Received: ${questions.length}`,
+      structuredContent: { error: true, message: `Minimum ${MIN_QUESTIONS} questions required` },
     };
   }
+  if (questions.length > MAX_QUESTIONS) {
+    return {
+      content: `# ❌ Error\n\nMaximum ${MAX_QUESTIONS} research questions allowed. Received: ${questions.length}`,
+      structuredContent: { error: true, message: `Maximum ${MAX_QUESTIONS} questions allowed` },
+    };
+  }
+
+  const tokensPerQuestion = calculateTokenAllocation(questions.length);
+
+  if (sessionId && logger) {
+    await logger('info', `Starting batch research: ${questions.length} questions, ${tokensPerQuestion.toLocaleString()} tokens/question`, sessionId);
+  }
+
+  const client = new ResearchClient();
+  const fileService = new FileAttachmentService();
+  const results: QuestionResult[] = [];
+
+  // Process all questions in parallel
+  const researchPromises = questions.map(async (q, index): Promise<QuestionResult> => {
+    try {
+      // Enhance question with file attachments if present
+      let enhancedQuestion = q.question;
+      if (q.file_attachments && q.file_attachments.length > 0) {
+        const attachmentsMarkdown = await fileService.formatAttachments(q.file_attachments);
+        enhancedQuestion = q.question + attachmentsMarkdown;
+      }
+
+      const response = await client.research({
+        question: enhancedQuestion,
+        systemPrompt: SYSTEM_PROMPT,
+        reasoningEffort: RESEARCH.REASONING_EFFORT,
+        maxSearchResults: Math.min(RESEARCH.MAX_URLS, 20),
+        maxTokens: tokensPerQuestion,
+      });
+
+      return {
+        question: q.question,
+        content: response.content,
+        success: true,
+        tokensUsed: response.usage?.totalTokens,
+      };
+    } catch (error) {
+      const simpleError = createSimpleError(error);
+      return {
+        question: q.question,
+        content: '',
+        success: false,
+        error: simpleError.message,
+      };
+    }
+  });
+
+  const allResults = await Promise.all(researchPromises);
+  results.push(...allResults);
+
+  // Build markdown output
+  const successful = results.filter(r => r.success);
+  const failed = results.filter(r => !r.success);
+  const totalTokens = successful.reduce((sum, r) => sum + (r.tokensUsed || 0), 0);
+
+  let markdown = `# Deep Research Results (${questions.length} questions)\n\n`;
+  markdown += `**Token Allocation:** ${tokensPerQuestion.toLocaleString()} tokens/question (${questions.length} questions, ${TOTAL_TOKEN_BUDGET.toLocaleString()} total budget)\n`;
+  markdown += `**Status:** ✅ ${successful.length} successful | ❌ ${failed.length} failed | 📊 ${totalTokens.toLocaleString()} tokens used\n\n`;
+  markdown += `---\n\n`;
+
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    markdown += `## Question ${i + 1}: ${r.question.substring(0, 100)}${r.question.length > 100 ? '...' : ''}\n\n`;
+
+    if (r.success) {
+      markdown += r.content + '\n\n';
+      if (r.tokensUsed) {
+        markdown += `_Tokens used: ${r.tokensUsed.toLocaleString()}_\n\n`;
+      }
+    } else {
+      markdown += `**❌ Error:** ${r.error}\n\n`;
+    }
+
+    markdown += `---\n\n`;
+  }
+
+  if (sessionId && logger) {
+    await logger('info', `Research completed: ${successful.length}/${questions.length} successful, ${totalTokens.toLocaleString()} tokens`, sessionId);
+  }
+
+  return {
+    content: markdown.trim(),
+    structuredContent: {
+      totalQuestions: questions.length,
+      successful: successful.length,
+      failed: failed.length,
+      tokensPerQuestion,
+      totalTokensUsed: totalTokens,
+      results,
+    },
+  };
 }

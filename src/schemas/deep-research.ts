@@ -1,78 +1,63 @@
 /**
- * Deep research schema - single unified research tool
- * Renamed from expert-intelligence for simplicity
+ * Deep research schema - batch research with dynamic token allocation
  */
 
 import { z } from 'zod';
 
-export const deepResearchParamsShape = {
-  deep_research_question: z
+const researchQuestionSchema = z.object({
+  question: z
     .string()
-    .min(1)
-    .describe(
-      `Provide complete research context. The researcher knows NOTHING about your situation — brief them like an expert consultant who just joined to investigate this topic thoroughly.
-
-**TOPIC & WHY:**
-- Precise topic you're researching
-- Why this matters: what decision does it inform? What problem are you solving?
-- Your role and what you're trying to accomplish
-- Urgency: exploratory learning? critical decision needed?
-
-**YOUR UNDERSTANDING:**
-- What you already know (so research fills gaps, doesn't repeat basics)
-- What you're uncertain or confused about
-- Assumptions you want validated or challenged
-- Specific areas where your knowledge might be outdated
-
-**RESEARCH SCOPE:**
-- **Depth needed:** Overview for decision-making? Detailed technical analysis? Expert-level deep dive?
-- **Format preferred:** Conceptual explanation? Step-by-step guide? Comparative analysis? Case studies?
-- **Examples needed:** Code samples? Architecture diagrams? Real-world implementations?
-- **Perspectives:** Single best approach? Multiple options with trade-offs? Contrarian views?
-
-**PRIORITIES:**
-- **Sources:** Official docs? Academic papers? Engineering blogs? Community tutorials? GitHub examples?
-- **Recency:** Must be 2024+ only? Any era acceptable? Historical context valuable?
-- **Domain:** Enterprise focus? Startup/indie hacker? Open-source first? Specific industry?
-- **Style:** Practical how-tos? Theoretical foundations? Balanced? Opinionated recommendations?
-
-**BOUNDARIES:**
-- **Exclude:** Topics to avoid, irrelevant tangents, specific technologies to skip
-- **Scope limits:** Narrow to specific subset? Broad overview? Deep on one aspect?
-- **Constraints:** Assume beginner-friendly? Require expert knowledge? Specific tech stack only?
-- **Time/effort:** Quick overview (20 min read)? Comprehensive research (multiple hours)?
-
-**QUESTIONS (3-7 specific):**
-1. [Most critical question]
-2. [Second most important]
-3. [Third question]
-4. [Additional question]
-5. [Follow-up question]
-
-Be thorough — the researcher can't ask follow-ups. Front-load all context.`
-    ),
-
+    .min(10, 'Research question must be at least 10 characters')
+    .describe('A specific research question with context, scope, and what you need answered.'),
   file_attachments: z
     .array(
       z.object({
         path: z.string().describe('File path (absolute or relative)'),
         start_line: z.number().int().positive().optional().describe('Start line (1-indexed)'),
         end_line: z.number().int().positive().optional().describe('End line (1-indexed)'),
-        description: z.string().optional().describe('What to focus on in this file'),
+        description: z.string().optional().describe('What to focus on'),
       })
     )
     .optional()
+    .describe('Optional file attachments for this specific question'),
+});
+
+export const deepResearchParamsShape = {
+  questions: z
+    .array(researchQuestionSchema)
+    .min(2, 'Minimum 2 research questions required for comprehensive analysis')
+    .max(10, 'Maximum 10 research questions per batch')
     .describe(
-      `Attach reference files for context when researching improvements, comparisons, or integrations.
+      `**BATCH RESEARCH (2-10 questions) with dynamic token allocation.**
 
-**USE WHEN:**
-- Researching how to improve existing implementation
-- Comparing your approach with best practices
-- Getting technology recommendations based on current stack
-- Understanding integration strategies with existing systems
-- Analyzing architecture decisions
+**TOKEN BUDGET:** 32,000 tokens distributed across all questions:
+- 2 questions: 16,000 tokens/question (deep dive)
+- 5 questions: 6,400 tokens/question (balanced)
+- 10 questions: 3,200 tokens/question (quick multi-topic scan)
 
-Optional but helpful when research relates to existing code/systems.`
+**EACH QUESTION SHOULD INCLUDE:**
+1. **Topic & Why:** What you're researching and what decision it informs
+2. **Your Understanding:** What you know (so it fills gaps, not repeats)
+3. **Scope:** Depth needed, format preferred, examples wanted
+4. **Specific Questions:** 2-5 pointed questions you need answered
+
+**BEST PRACTICES:**
+- Use 2-3 questions for deep dives on related topics
+- Use 5-7 questions for broad research across a domain
+- Use 8-10 questions for rapid multi-topic scanning
+- Group related questions together for coherent research
+
+**EXAMPLE:**
+\`\`\`json
+{
+  "questions": [
+    { "question": "What are best practices for MCP server authentication in TypeScript? Cover OAuth2, API keys, session management. Include code examples." },
+    { "question": "How do production MCP servers handle rate limiting and error recovery? Looking for patterns from Anthropic, Microsoft, and community servers." }
+  ]
+}
+\`\`\`
+
+Maximize question count for comprehensive coverage. Each question runs in parallel.`
     ),
 };
 
