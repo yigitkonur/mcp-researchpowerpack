@@ -159,7 +159,7 @@ export class RedditClient {
   private formatBody(p: any): string {
     if (p.selftext?.trim()) return p.selftext;
     if (p.is_self) return '';
-    if (p.url && !p.url.includes('reddit.com')) return `**Link:** ${p.url}`;
+    if (p.url) return `**Link:** ${p.url}`;
     return '';
   }
 
