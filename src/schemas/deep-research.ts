@@ -25,15 +25,16 @@ const researchQuestionSchema = z.object({
 export const deepResearchParamsShape = {
   questions: z
     .array(researchQuestionSchema)
-    .min(2, 'Minimum 2 research questions required for comprehensive analysis')
+    .min(1, 'At least one research question required, but you should keep it around 6-7 at each round')
     .max(10, 'Maximum 10 research questions per batch')
     .describe(
-      `**BATCH RESEARCH (2-10 questions) with dynamic token allocation.**
+      `**BATCH RESEARCH (1-10 questions) with dynamic token allocation.**
 
 **TOKEN BUDGET:** 32,000 tokens distributed across all questions:
-- 2 questions: 16,000 tokens/question (deep dive)
-- 5 questions: 6,400 tokens/question (balanced)
-- 10 questions: 3,200 tokens/question (quick multi-topic scan)
+- 1 question: 32,000 tokens (maximum depth)
+- 2-3 questions: ~10-16K tokens/question (deep dive, recommended for related topics)
+- 5-7 questions: ~4-6K tokens/question (balanced breadth, ideal for domain exploration)
+- 8-10 questions: ~3-4K tokens/question (quick multi-topic scan)
 
 **EACH QUESTION SHOULD INCLUDE:**
 1. **Topic & Why:** What you're researching and what decision it informs
@@ -42,10 +43,11 @@ export const deepResearchParamsShape = {
 4. **Specific Questions:** 2-5 pointed questions you need answered
 
 **BEST PRACTICES:**
-- Use 2-3 questions for deep dives on related topics
+- Use 2-3 questions for deep dives on related topics (recommended)
 - Use 5-7 questions for broad research across a domain
 - Use 8-10 questions for rapid multi-topic scanning
 - Group related questions together for coherent research
+- More questions = broader coverage but less depth per topic
 
 **EXAMPLE:**
 \`\`\`json
@@ -57,7 +59,7 @@ export const deepResearchParamsShape = {
 }
 \`\`\`
 
-Maximize question count for comprehensive coverage. Each question runs in parallel.`
+Aim for 2-5 questions for optimal balance. Each question runs in parallel.`
     ),
 };
 

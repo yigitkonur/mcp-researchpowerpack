@@ -4,9 +4,9 @@ import { z } from 'zod';
 export const scrapeLinksParamsShape = {
   urls: z
     .array(z.string().url('Must be a valid HTTP or HTTPS URL'))
-    .min(3, 'Minimum 3 URLs required for efficient batch processing')
+    .min(1, 'At least one URL required')
     .max(50, 'Maximum 50 URLs allowed per request')
-    .describe('URLs to scrape (3-50). More URLs = broader coverage but fewer tokens per URL. 3 URLs: ~10K tokens each (deep); 50 URLs: ~640 tokens each (scan).'),
+    .describe('URLs to scrape (1-50). Recommend 3-5 URLs for balanced depth/breadth. More URLs = broader coverage but fewer tokens per URL. 3 URLs: ~10K tokens each (deep); 10 URLs: ~3K tokens each (balanced); 50 URLs: ~640 tokens each (scan).'),
   timeout: z
     .number()
     .min(5)

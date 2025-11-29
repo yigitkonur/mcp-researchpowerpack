@@ -5,7 +5,7 @@ const keywordsSchema = z
   .array(z.string().min(1, 'Keyword cannot be empty').max(500, 'Keyword cannot exceed 500 characters'))
   .min(1, 'At least one keyword is required')
   .max(100, 'Cannot exceed 100 keywords per request')
-  .describe('Array of search keywords (1-100 keywords). Use specific, targeted keywords for best results.');
+  .describe('Array of search keywords (1-100 keywords). Recommend 3-7 keywords for comprehensive research. Use specific, targeted keywords for best results. More keywords = broader coverage and diverse perspectives.');
 
 export const webSearchParamsShape = {
   keywords: keywordsSchema,
