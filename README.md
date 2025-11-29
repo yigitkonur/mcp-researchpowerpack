@@ -443,7 +443,7 @@ For the best research experience, configure all four API keys:
 ```bash
 # .env
 SERPER_API_KEY=your_serper_key       # Free: 2,500 queries/month
-REDDIT_CLIENT_ID=your_reddit_id       # Free: Unlimited
+REDDIT_CLIENT_ID=your_reddit_id       # Free: Nearly unlimited
 REDDIT_CLIENT_SECRET=your_reddit_secret
 SCRAPEDO_API_KEY=your_scrapedo_key   # Free: 1,000 credits/month
 OPENROUTER_API_KEY=your_openrouter_key # Pay-as-you-go

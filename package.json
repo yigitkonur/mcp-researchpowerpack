@@ -20,7 +20,6 @@
     "test:reddit-search": "tsx tests/test-reddit-search.ts",
     "test:scrape-links": "tsx tests/test-scrape-links.ts",
     "test:deep-research": "tsx tests/test-deep-research.ts",
-    "test:parallel": "tsx tests/parallel-test-runner.ts",
     "test:all": "npm run test:web-search && npm run test:reddit-search && npm run test:scrape-links && npm run test:deep-research",
     "test:check": "tsx tests/check-setup.ts"
   },

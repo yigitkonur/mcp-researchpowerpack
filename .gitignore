@@ -34,3 +34,6 @@ yarn-error.log*
 
 # Test coverage
 coverage/
+
+# Test logs (generated)
+test-logs/
