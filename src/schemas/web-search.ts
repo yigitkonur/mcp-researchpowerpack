@@ -20,7 +20,7 @@ const keywordsSchema = z
   .max(100, { message: 'web_search: Maximum 100 keywords allowed per request' })
   .describe('Array of search keywords (1-100 keywords). Recommend 3-7 keywords for comprehensive research. Supports Google search operators (site:, -exclusion, "exact phrase", filetype:). More keywords = broader coverage and diverse perspectives.');
 
-export const webSearchParamsShape = {
+const webSearchParamsShape = {
   keywords: keywordsSchema,
 };
 

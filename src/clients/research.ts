@@ -13,7 +13,7 @@ import {
   type StructuredError,
 } from '../utils/errors.js';
 
-export interface ResearchParams {
+interface ResearchParams {
   question: string;
   systemPrompt?: string;
   reasoningEffort?: 'low' | 'medium' | 'high';
@@ -55,6 +55,21 @@ const RESEARCH_RETRY_CONFIG = {
 
 // Retryable status codes for research API
 const RETRYABLE_RESEARCH_CODES = new Set([429, 500, 502, 503, 504]);
+
+// Models that use Gemini-style google_search tool instead of search_parameters
+const GEMINI_STYLE_MODELS = new Set([
+  'google/gemini-2.5-flash',
+  'google/gemini-2.5-pro',
+  'google/gemini-2.0-flash',
+  'google/gemini-pro',
+]);
+
+/**
+ * Check if a model uses Gemini-style google_search tool
+ */
+function isGeminiStyleModel(model: string): boolean {
+  return GEMINI_STYLE_MODELS.has(model) || model.startsWith('google/gemini');
+}
 
 export class ResearchClient {
   private client: OpenAI;
@@ -114,7 +129,164 @@ export class ResearchClient {
   }
 
   /**
-   * Perform research with retry logic
+   * Build request payload based on model type
+   * Gemini models use tools with google_search, others use search_parameters
+   */
+  private buildRequestPayload(
+    model: string,
+    messages: Array<{ role: 'system' | 'user'; content: string }>,
+    options: {
+      temperature: number;
+      reasoningEffort: 'low' | 'medium' | 'high';
+      maxTokens: number;
+      maxSearchResults: number;
+      responseFormat?: { type: 'json_object' | 'text' };
+    }
+  ): Record<string, unknown> {
+    const { temperature, reasoningEffort, maxTokens, maxSearchResults, responseFormat } = options;
+
+    if (isGeminiStyleModel(model)) {
+      // Gemini uses tools with google_search
+      const payload: Record<string, unknown> = {
+        model,
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+        tools: [
+          {
+            type: 'google_search',
+            googleSearch: {},
+          },
+        ],
+      };
+      if (responseFormat) {
+        payload.response_format = responseFormat;
+      }
+      return payload;
+    }
+
+    // Default: use search_parameters (for Grok, Perplexity, etc.)
+    const payload: Record<string, unknown> = {
+      model,
+      messages,
+      temperature,
+      reasoning_effort: reasoningEffort,
+      max_completion_tokens: maxTokens,
+      search_parameters: {
+        mode: 'on',
+        max_search_results: Math.min(maxSearchResults, 30),
+        return_citations: true,
+        sources: [{ type: 'web' }],
+      },
+    };
+    if (responseFormat) {
+      payload.response_format = responseFormat;
+    }
+    return payload;
+  }
+
+  /**
+   * Execute a single research request with a specific model
+   */
+  private async executeResearch(
+    model: string,
+    messages: Array<{ role: 'system' | 'user'; content: string }>,
+    options: {
+      temperature: number;
+      reasoningEffort: 'low' | 'medium' | 'high';
+      maxTokens: number;
+      maxSearchResults: number;
+      responseFormat?: { type: 'json_object' | 'text' };
+    }
+  ): Promise<ResearchResponse> {
+    const requestPayload = this.buildRequestPayload(model, messages, options);
+    let lastError: StructuredError | undefined;
+
+    // Retry loop for this model
+    for (let attempt = 0; attempt <= RESEARCH_RETRY_CONFIG.maxRetries; attempt++) {
+      try {
+        if (attempt > 0) {
+          console.error(`[Research] Retry attempt ${attempt}/${RESEARCH_RETRY_CONFIG.maxRetries} for ${model}`);
+        }
+
+        const response = await this.client.chat.completions.create(requestPayload as any);
+        const choice = response.choices?.[0];
+        const message = choice?.message as any;
+
+        // Validate response
+        if (!message?.content && !choice) {
+          lastError = {
+            code: ErrorCode.INTERNAL_ERROR,
+            message: 'Research API returned empty response',
+            retryable: true,
+          };
+
+          if (attempt < RESEARCH_RETRY_CONFIG.maxRetries) {
+            const delayMs = this.calculateBackoff(attempt);
+            console.error(`[Research] Empty response, retrying in ${delayMs}ms...`);
+            await sleep(delayMs);
+            continue;
+          }
+        }
+
+        return {
+          id: response.id || '',
+          model: response.model || model,
+          created: response.created || Date.now(),
+          content: message?.content || '',
+          finishReason: choice?.finish_reason,
+          usage: response.usage ? {
+            promptTokens: response.usage.prompt_tokens,
+            completionTokens: response.usage.completion_tokens,
+            totalTokens: response.usage.total_tokens,
+            sourcesUsed: (response.usage as any).num_sources_used,
+          } : undefined,
+          annotations: message?.annotations?.map((a: any) => ({
+            type: 'url_citation' as const,
+            url: a.url_citation?.url || '',
+            title: a.url_citation?.title || '',
+            startIndex: a.url_citation?.start_index || 0,
+            endIndex: a.url_citation?.end_index || 0,
+          })),
+        };
+
+      } catch (error: unknown) {
+        lastError = classifyError(error);
+
+        const err = error as { status?: number; message?: string };
+        console.error(`[Research] Error with ${model} (attempt ${attempt + 1}): ${lastError.message}`, {
+          status: err.status,
+        });
+
+        // Check if we should retry
+        if (this.isRetryableError(error) && attempt < RESEARCH_RETRY_CONFIG.maxRetries) {
+          const delayMs = this.calculateBackoff(attempt);
+          console.error(`[Research] Retrying in ${delayMs}ms...`);
+          await sleep(delayMs);
+          continue;
+        }
+
+        // Non-retryable or max retries reached
+        break;
+      }
+    }
+
+    // Return error response
+    return {
+      id: '',
+      model,
+      created: Date.now(),
+      content: '',
+      error: lastError || {
+        code: ErrorCode.UNKNOWN_ERROR,
+        message: 'Unknown research error',
+        retryable: false,
+      },
+    };
+  }
+
+  /**
+   * Perform research with retry logic and fallback to secondary model
    * Returns a ResearchResponse - may contain error field on failure
    * NEVER throws - always returns a valid response object
    */
@@ -150,109 +322,38 @@ export class ResearchClient {
     }
     messages.push({ role: 'user', content: question });
 
-    const requestPayload: Record<string, unknown> = {
-      model: RESEARCH.MODEL,
-      messages,
-      temperature,
-      reasoning_effort: reasoningEffort,
-      max_completion_tokens: maxTokens,
-      search_parameters: {
-        mode: 'on',
-        max_search_results: Math.min(maxSearchResults, 30),
-        return_citations: true,
-        sources: [{ type: 'web' }],
-      },
-    };
+    const options = { temperature, reasoningEffort, maxTokens, maxSearchResults, responseFormat };
 
-    if (responseFormat) {
-      requestPayload.response_format = responseFormat;
+    // Try primary model first
+    console.error(`[Research] Trying primary model: ${RESEARCH.MODEL}`);
+    const primaryResult = await this.executeResearch(RESEARCH.MODEL, messages, options);
+
+    if (!primaryResult.error) {
+      return primaryResult;
     }
 
-    let lastError: StructuredError | undefined;
+    // Primary failed - try fallback model if different
+    if (RESEARCH.FALLBACK_MODEL && RESEARCH.FALLBACK_MODEL !== RESEARCH.MODEL) {
+      console.error(`[Research] Primary model failed, trying fallback: ${RESEARCH.FALLBACK_MODEL}`);
+      const fallbackResult = await this.executeResearch(RESEARCH.FALLBACK_MODEL, messages, options);
 
-    // Retry loop
-    for (let attempt = 0; attempt <= RESEARCH_RETRY_CONFIG.maxRetries; attempt++) {
-      try {
-        if (attempt > 0) {
-          console.error(`[Research] Retry attempt ${attempt}/${RESEARCH_RETRY_CONFIG.maxRetries}`);
-        }
-
-        const response = await this.client.chat.completions.create(requestPayload as any);
-        const choice = response.choices?.[0];
-        const message = choice?.message as any;
-
-        // Validate response
-        if (!message?.content && !choice) {
-          lastError = {
-            code: ErrorCode.INTERNAL_ERROR,
-            message: 'Research API returned empty response',
-            retryable: true, // Might be a transient issue
-          };
-
-          if (attempt < RESEARCH_RETRY_CONFIG.maxRetries) {
-            const delayMs = this.calculateBackoff(attempt);
-            console.error(`[Research] Empty response, retrying in ${delayMs}ms...`);
-            await sleep(delayMs);
-            continue;
-          }
-        }
-
-        return {
-          id: response.id || '',
-          model: response.model || RESEARCH.MODEL,
-          created: response.created || Date.now(),
-          content: message?.content || '',
-          finishReason: choice?.finish_reason,
-          usage: response.usage ? {
-            promptTokens: response.usage.prompt_tokens,
-            completionTokens: response.usage.completion_tokens,
-            totalTokens: response.usage.total_tokens,
-            sourcesUsed: (response.usage as any).num_sources_used,
-          } : undefined,
-          annotations: message?.annotations?.map((a: any) => ({
-            type: 'url_citation' as const,
-            url: a.url_citation?.url || '',
-            title: a.url_citation?.title || '',
-            startIndex: a.url_citation?.start_index || 0,
-            endIndex: a.url_citation?.end_index || 0,
-          })),
-        };
-
-      } catch (error: unknown) {
-        lastError = classifyError(error);
-
-        const err = error as { status?: number; message?: string };
-        console.error(`[Research] Error (attempt ${attempt + 1}): ${lastError.message}`, {
-          status: err.status,
-        });
-
-        // Check if we should retry
-        if (this.isRetryableError(error) && attempt < RESEARCH_RETRY_CONFIG.maxRetries) {
-          const delayMs = this.calculateBackoff(attempt);
-          console.error(`[Research] Retrying in ${delayMs}ms...`);
-          await sleep(delayMs);
-          continue;
-        }
-
-        // Non-retryable or max retries reached
-        break;
+      if (!fallbackResult.error) {
+        return fallbackResult;
       }
+
+      // Both failed - return the fallback error (more recent)
+      console.error(`[Research] Both models failed. Primary: ${primaryResult.error?.message}, Fallback: ${fallbackResult.error?.message}`);
+      return {
+        ...fallbackResult,
+        content: `Research failed with both models. Primary (${RESEARCH.MODEL}): ${primaryResult.error?.message}. Fallback (${RESEARCH.FALLBACK_MODEL}): ${fallbackResult.error?.message}`,
+      };
     }
 
-    // All attempts failed - return error response
-    const errorMessage = lastError?.message || 'Unknown research error';
-    console.error(`[Research] All attempts failed: ${errorMessage}`);
-
+    // No fallback or same model - return primary error
+    console.error(`[Research] All attempts failed: ${primaryResult.error?.message}`);
     return {
-      id: '',
-      model: RESEARCH.MODEL,
-      created: Date.now(),
-      content: `Research failed: ${errorMessage}`,
-      error: lastError || {
-        code: ErrorCode.UNKNOWN_ERROR,
-        message: errorMessage,
-        retryable: false,
-      },
+      ...primaryResult,
+      content: `Research failed: ${primaryResult.error?.message}`,
     };
   }
 }

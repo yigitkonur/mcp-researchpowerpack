@@ -13,7 +13,7 @@ import {
   type StructuredError,
 } from '../utils/errors.js';
 
-export interface SearchResult {
+interface SearchResult {
   title: string;
   link: string;
   snippet: string;
@@ -29,7 +29,7 @@ export interface KeywordSearchResult {
   error?: StructuredError;
 }
 
-export interface MultipleSearchResponse {
+interface MultipleSearchResponse {
   searches: KeywordSearchResult[];
   totalKeywords: number;
   executionTime: number;

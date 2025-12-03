@@ -56,7 +56,7 @@ export async function handleSearchReddit(
   dateAfter?: string
 ): Promise<string> {
   try {
-    const limited = queries.slice(0, 10);
+    const limited = queries.slice(0, 50);
     const client = new SearchClient(apiKey);
     const results = await client.searchRedditMultiple(limited, dateAfter);
 
@@ -73,8 +73,8 @@ export async function handleSearchReddit(
     // Aggregate and rank results by CTR
     const aggregation = aggregateAndRankReddit(results, 3);
 
-    // Generate enhanced output with consensus highlighting
-    return generateRedditEnhancedOutput(aggregation, limited);
+    // Generate enhanced output with consensus highlighting AND per-query raw results
+    return generateRedditEnhancedOutput(aggregation, limited, results);
   } catch (error) {
     const structuredError = classifyError(error);
     const retryHint = structuredError.retryable 
@@ -88,7 +88,7 @@ export async function handleSearchReddit(
 // Get Reddit Posts Handler
 // ============================================================================
 
-export interface GetRedditPostsOptions {
+interface GetRedditPostsOptions {
   fetchComments?: boolean;
   maxCommentsOverride?: number;
 }

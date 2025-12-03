@@ -13,14 +13,14 @@ import {
   type StructuredError,
 } from '../utils/errors.js';
 
-export interface ScrapeRequest {
+interface ScrapeRequest {
   url: string;
   mode?: 'basic' | 'javascript';
   timeout?: number;
   country?: string;
 }
 
-export interface ScrapeResponse {
+interface ScrapeResponse {
   content: string;
   statusCode: number;
   credits: number;
@@ -28,7 +28,7 @@ export interface ScrapeResponse {
   error?: StructuredError;
 }
 
-export interface BatchScrapeResult {
+interface BatchScrapeResult {
   results: Array<ScrapeResponse & { url: string }>;
   batchesProcessed: number;
   totalAttempted: number;

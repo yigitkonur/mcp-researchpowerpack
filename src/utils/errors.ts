@@ -26,7 +26,7 @@ export const ErrorCode = {
   UNKNOWN_ERROR: 'UNKNOWN_ERROR',
 } as const;
 
-export type ErrorCodeType = typeof ErrorCode[keyof typeof ErrorCode];
+type ErrorCodeType = typeof ErrorCode[keyof typeof ErrorCode];
 
 // ============================================================================
 // Structured Error Types
@@ -40,7 +40,7 @@ export interface StructuredError {
   cause?: string;
 }
 
-export interface RetryOptions {
+interface RetryOptions {
   maxRetries: number;
   baseDelayMs: number;
   maxDelayMs: number;
@@ -48,7 +48,7 @@ export interface RetryOptions {
   onRetry?: (attempt: number, error: StructuredError, delayMs: number) => void;
 }
 
-export const DEFAULT_RETRY_OPTIONS: RetryOptions = {
+const DEFAULT_RETRY_OPTIONS: RetryOptions = {
   maxRetries: 3,
   baseDelayMs: 1000,
   maxDelayMs: 30000,
@@ -199,7 +199,7 @@ function classifyHttpError(status: number, message: string): StructuredError {
 /**
  * Calculate delay with exponential backoff and jitter
  */
-export function calculateBackoff(attempt: number, options: RetryOptions): number {
+function calculateBackoff(attempt: number, options: RetryOptions): number {
   const exponentialDelay = options.baseDelayMs * Math.pow(2, attempt);
   const jitter = Math.random() * 0.3 * exponentialDelay; // 0-30% jitter
   return Math.min(exponentialDelay + jitter, options.maxDelayMs);
@@ -227,8 +227,9 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 /**
  * Execute a function with retry logic
  * NEVER throws on final failure - returns error result instead
+ * @internal - Currently unused but kept for future retry implementations
  */
-export async function withRetry<T>(
+async function withRetry<T>(
   fn: (signal: AbortSignal) => Promise<T>,
   options: Partial<RetryOptions> = {}
 ): Promise<{ success: true; data: T } | { success: false; error: StructuredError; attempts: number }> {
@@ -298,8 +299,9 @@ export function fetchWithTimeout(
 
 /**
  * Safely execute any function, NEVER throws
+ * @internal - Currently unused but kept for future safe execution patterns
  */
-export async function safeExecute<T>(
+async function safeExecute<T>(
   fn: () => Promise<T>,
   fallback: T
 ): Promise<{ data: T; error?: StructuredError }> {
@@ -313,8 +315,9 @@ export async function safeExecute<T>(
 
 /**
  * Safely parse JSON, NEVER throws
+ * @internal - Currently unused but kept for future JSON parsing needs
  */
-export function safeJsonParse<T>(text: string, fallback: T): { data: T; error?: string } {
+function safeJsonParse<T>(text: string, fallback: T): { data: T; error?: string } {
   try {
     return { data: JSON.parse(text) as T };
   } catch (error) {
@@ -348,7 +351,7 @@ export type McpErrorCodeType = typeof MCP_ERROR_CODES[keyof typeof MCP_ERROR_COD
  * Per MCP spec: tools return isError:true for recoverable/tool-level failures
  * Uses index signature for SDK compatibility with additional fields
  */
-export interface ToolErrorResponse {
+interface ToolErrorResponse {
   content: Array<{ type: 'text'; text: string }>;
   isError: true;
   errorCode?: McpErrorCodeType;
@@ -359,7 +362,7 @@ export interface ToolErrorResponse {
 /**
  * Map internal ErrorCode to client-facing MCP_ERROR_CODES
  */
-export function mapErrorCodeToMCP(code: ErrorCodeType): McpErrorCodeType {
+function mapErrorCodeToMCP(code: ErrorCodeType): McpErrorCodeType {
   switch (code) {
     case ErrorCode.RATE_LIMITED:
     case ErrorCode.QUOTA_EXCEEDED:
@@ -390,7 +393,7 @@ export function mapErrorCodeToMCP(code: ErrorCodeType): McpErrorCodeType {
  * @param errorCode - Optional MCP error code for programmatic handling
  * @param retryAfter - Optional seconds to wait before retry (for rate limits)
  */
-export function createToolError(
+function createToolError(
   message: string,
   errorCode?: McpErrorCodeType,
   retryAfter?: number

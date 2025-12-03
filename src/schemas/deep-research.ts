@@ -207,7 +207,8 @@ const researchQuestionSchema = z.object({
     ),
 });
 
-export const deepResearchParamsShape = {
+// Shape object for external consumers who need individual field schemas
+const deepResearchParamsShape = {
   questions: z
     .array(researchQuestionSchema, { 
       required_error: 'deep_research: Questions array is required',

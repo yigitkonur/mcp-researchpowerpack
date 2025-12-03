@@ -64,14 +64,4 @@ export const PACKAGE_DESCRIPTION: string = packageJson.description;
  */
 export const USER_AGENT_VERSION: string = `${PACKAGE_NAME}/${VERSION}`;
 
-/**
- * Full version info object
- */
-export const VERSION_INFO = {
-  version: VERSION,
-  name: PACKAGE_NAME,
-  description: PACKAGE_DESCRIPTION,
-  userAgent: USER_AGENT_VERSION,
-} as const;
-
-export default VERSION;
+// VERSION_INFO removed - unused, individual exports sufficient

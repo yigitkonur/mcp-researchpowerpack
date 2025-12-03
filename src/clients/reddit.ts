@@ -14,7 +14,7 @@ import {
   type StructuredError,
 } from '../utils/errors.js';
 
-export interface Post {
+interface Post {
   title: string;
   author: string;
   subreddit: string;
@@ -43,7 +43,7 @@ export interface PostResult {
   actualComments: number;
 }
 
-export interface BatchPostResult {
+interface BatchPostResult {
   results: Map<string, PostResult | Error>;
   batchesProcessed: number;
   totalPosts: number;
@@ -51,7 +51,7 @@ export interface BatchPostResult {
   commentAllocation: CommentAllocation;
 }
 
-export interface CommentAllocation {
+interface CommentAllocation {
   totalBudget: number;
   perPostBase: number;
   perPostCapped: number;

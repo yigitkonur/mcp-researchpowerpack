@@ -24,7 +24,7 @@ interface AggregatedUrl {
 /**
  * Ranked URL with normalized score
  */
-export interface RankedUrl {
+interface RankedUrl {
   url: string;
   title: string;
   snippet: string;
@@ -356,7 +356,7 @@ interface AggregatedRedditUrl {
 /**
  * Ranked Reddit URL with normalized score
  */
-export interface RankedRedditUrl {
+interface RankedRedditUrl {
   url: string;
   title: string;
   snippet: string;
@@ -373,7 +373,7 @@ export interface RankedRedditUrl {
 /**
  * Reddit aggregation result
  */
-export interface RedditAggregationResult {
+interface RedditAggregationResult {
   rankedUrls: RankedRedditUrl[];
   totalUniqueUrls: number;
   totalQueries: number;
@@ -514,10 +514,12 @@ export function aggregateAndRankReddit(
 
 /**
  * Generate enhanced output for Reddit aggregated results
+ * Now includes both aggregated view AND per-query raw results
  */
 export function generateRedditEnhancedOutput(
   aggregation: RedditAggregationResult,
-  allQueries: string[]
+  allQueries: string[],
+  rawResults?: Map<string, RedditSearchResult[]>
 ): string {
   const { rankedUrls, totalUniqueUrls, frequencyThreshold, thresholdNote } = aggregation;
   const lines: string[] = [];
@@ -569,6 +571,38 @@ export function generateRedditEnhancedOutput(
       lines.push(`_Found in ${url.frequency} queries: ${url.queries.map(q => `"${q}"`).join(', ')}_`);
     }
     lines.push('');
+  }
+
+  // Per-Query Raw Results Section (NEW)
+  if (rawResults && rawResults.size > 0) {
+    lines.push('---');
+    lines.push('');
+    lines.push('## 📋 Per-Query Raw Results');
+    lines.push('');
+    lines.push('*Complete results for each individual query before aggregation:*');
+    lines.push('');
+
+    for (const [query, results] of rawResults) {
+      lines.push(`### 🔎 Query: "${query}"`);
+      lines.push(`**Results:** ${results.length} posts`);
+      lines.push('');
+
+      if (results.length === 0) {
+        lines.push('_No results found for this query._');
+        lines.push('');
+        continue;
+      }
+
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        const position = i + 1;
+        const dateStr = result.date ? ` • 📅 ${result.date}` : '';
+        lines.push(`${position}. **${result.title}**${dateStr}`);
+        lines.push(`   ${result.url}`);
+        lines.push(`   > ${result.snippet}`);
+        lines.push('');
+      }
+    }
   }
 
   // Metadata

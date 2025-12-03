@@ -10,7 +10,7 @@ const urlSchema = z
   );
 
 // Input schema for scrape_links tool
-export const scrapeLinksParamsShape = {
+const scrapeLinksParamsShape = {
   urls: z
     .array(urlSchema, {
       required_error: 'scrape_links: URLs array is required',

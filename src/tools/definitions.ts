@@ -12,14 +12,52 @@ export const TOOLS = [
   // === REDDIT TOOLS ===
   {
     name: 'search_reddit',
-    description: `Search Reddit via Google (10 results/query). MUST call get_reddit_post after. Supports: intitle:, "exact", OR, -exclude. Auto-adds site:reddit.com. Call this tool first to find relevant posts, then call get_reddit_post with the URLs you find. Try to add all distinct relevant searches, try to bring max 10 search but effectively utilize limits by distinct queries like given example. Only use date_after if recent content needed`,
+    description: `**Comprehensive Reddit research via Google (10 results/query, 10-50 queries supported).**
+
+MUST call get_reddit_post after to fetch full post content and comments.
+
+**QUERY REQUIREMENTS:**
+- **Minimum:** 3 queries (hard limit)
+- **Recommended:** 10+ queries (for meaningful consensus analysis)
+- **Optimal:** 20-30 queries covering all angles of the topic
+- **Maximum:** 50 queries (for comprehensive deep research)
+
+**OUTPUT FORMAT:**
+1. **High-Consensus Posts** - Posts appearing in multiple queries (ranked by CTR score)
+2. **All Results (CTR-Ranked)** - Aggregated unique posts sorted by weighted score
+3. **Per-Query Raw Results** - Complete results for each individual query before aggregation
+
+**QUERY CRAFTING STRATEGY (aim for 10-50 distinct queries):**
+- Direct topic variations (3-5 queries)
+- Recommendation/best-of queries (3-5 queries)
+- Specific tool/project names (5-10 queries)
+- Comparison queries (3-5 queries)
+- Alternative/replacement queries (3-5 queries)
+- Subreddit-specific queries (5-10 queries)
+- Problem/issue queries (3-5 queries)
+- Year-specific queries for recency (2-3 queries)
+
+**OPERATORS:** intitle:, "exact phrase", OR, -exclude. Auto-adds site:reddit.com.`,
     inputSchema: {
       type: 'object' as const,
       properties: {
         queries: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Distinct queries (max 10). Maximize count for multiple perspectives. eg: ["best IDE 2025", "best AI features on IDEs", "best IDE for Python", "top alternatives to vscode", "top alternatives to intitle:cursor -windsurf", "intitle:comparison of top IDEs","new IDEs like intitle:zed"]',
+          description: `**3-50 queries for Reddit research.** Minimum 3 required, but generate at least 10 for meaningful consensus. More queries = better consensus detection.
+
+**QUERY CATEGORIES (aim for coverage across all):**
+
+1. **Direct Topic (3-5):** "YouTube Music Mac app", "YTM desktop application"
+2. **Recommendations (3-5):** "best YouTube Music client Mac", "recommended YTM app"
+3. **Specific Tools (5-10):** "YTMDesktop Mac", "th-ch youtube-music", "steve228uk YT Music"
+4. **Comparisons (3-5):** "YouTube Music vs Spotify Mac", "YTM vs Apple Music desktop"
+5. **Alternatives (3-5):** "YouTube Music Mac alternative", "YTM replacement app"
+6. **Subreddits (5-10):** "r/YoutubeMusic desktop", "r/macapps YouTube Music", "r/opensource YTM"
+7. **Problems/Issues (3-5):** "YouTube Music desktop performance", "YTM app crashes Mac"
+8. **Year-Specific (2-3):** "best YouTube Music app 2024", "YTM desktop 2025"
+9. **Features (3-5):** "YouTube Music offline Mac", "YTM lyrics desktop"
+10. **Developer/GitHub (3-5):** "youtube-music electron app", "YTM github project"`,
         },
         date_after: {
           type: 'string',

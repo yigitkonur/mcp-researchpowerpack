@@ -237,7 +237,8 @@ export async function processContentWithLLM(
  * Process multiple contents with LLM in parallel with rate limiting
  * NEVER throws - always returns results array
  */
-export async function processMultipleWithLLM(
+// @internal - Currently unused but kept for future batch LLM processing
+async function processMultipleWithLLM(
   contents: Array<{ content: string; url: string }>,
   config: ProcessingConfig,
   processor?: OpenAI | null,

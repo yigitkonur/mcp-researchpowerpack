@@ -5,8 +5,7 @@
 
 import { VERSION, PACKAGE_NAME, PACKAGE_DESCRIPTION } from '../version.js';
 
-// Re-export version utilities for convenience
-export { VERSION, PACKAGE_NAME, PACKAGE_DESCRIPTION } from '../version.js';
+// Import version utilities (not re-exported - use directly from version.ts if needed externally)
 
 // ============================================================================
 // Safe Integer Parsing Helper
@@ -54,7 +53,7 @@ function safeParseInt(
 // Environment Parsing
 // ============================================================================
 
-export interface EnvConfig {
+interface EnvConfig {
   SCRAPER_API_KEY: string;
   SEARCH_API_KEY: string | undefined;
   REDDIT_CLIENT_ID: string | undefined;
@@ -76,7 +75,8 @@ export function parseEnv(): EnvConfig {
 
 export const RESEARCH = {
   BASE_URL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
-  MODEL: process.env.RESEARCH_MODEL || 'x-ai/grok-4.1-fast',
+  MODEL: process.env.RESEARCH_MODEL || 'x-ai/grok-4-fast',
+  FALLBACK_MODEL: process.env.RESEARCH_FALLBACK_MODEL || 'google/gemini-2.5-flash',
   API_KEY: process.env.OPENROUTER_API_KEY || '',
   // Timeout: min 1s, max 1hr, default 30min
   TIMEOUT_MS: safeParseInt(process.env.API_TIMEOUT_MS, 1800000, 1000, 3600000),
@@ -101,7 +101,7 @@ export const SERVER = {
 // Capability Detection (which features are available based on ENV)
 // ============================================================================
 
-export interface Capabilities {
+interface Capabilities {
   reddit: boolean;        // REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET
   search: boolean;        // SERPER_API_KEY
   scraping: boolean;      // SCRAPEDO_API_KEY
