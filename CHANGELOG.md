@@ -61,6 +61,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `web_search`: 1 → 3 minimum keywords
   - All tools: Added recommended ranges
 
+- **Sequential Thinking Workflows** - Iterative refinement patterns for all research tools
+  - Think → Search → Think → Refine → Search Again pattern
+  - Mandatory thinking steps between tool calls
+  - Scope expansion based on results
+  - Examples of iterative flows for each tool
+  - Feedback loop guidance (results inform next search)
+
 ### Documentation
 
 - Added `docs/refactoring/06-validation-system-design.md` - Validation architecture

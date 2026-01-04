@@ -183,6 +183,89 @@ tools:
       - `-exclude` - Exclude term
       - Auto-adds `site:reddit.com` to all queries
 
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      🧠 **ITERATIVE WORKFLOW - THINK → SEARCH → THINK → REFINE → SEARCH AGAIN**
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      **CRITICAL:** Use sequential thinking BETWEEN tool calls to refine your approach!
+      
+      **WORKFLOW PATTERN:**
+      ```
+      1. THINK FIRST (1-2 thoughts via sequentialthinking)
+         → Analyze what you need to research
+         → Plan your initial query strategy
+         → Identify which categories to cover
+      
+      2. SEARCH (call search_reddit with 10-20 queries)
+         → Execute your planned queries
+         → Get initial results
+      
+      3. THINK AFTER RESULTS (2-3 thoughts via sequentialthinking)
+         → Evaluate what you found
+         → Identify gaps in coverage
+         → Notice new angles from results
+         → Decide: get_reddit_post OR search_reddit again with refined queries
+      
+      4. REFINE & ITERATE
+         Option A: Get full content
+         → Call get_reddit_post with promising URLs
+         → Think about insights
+         → Search again if gaps remain
+         
+         Option B: Search again with new angles
+         → Call search_reddit with refined queries based on learnings
+         → Cover gaps you discovered
+         → Think and decide next step
+      ```
+      
+      **WHY THIS WORKS:**
+      - Search results = feedback that reveals new angles
+      - Thinking between calls = space to evaluate and refine
+      - Humans don't search once and stop - neither should you!
+      - Initial queries might miss important perspectives
+      - Results often reveal better search terms
+      
+      **EXAMPLE ITERATIVE FLOW:**
+      ```
+      Step 1: Think
+      "I need to research YouTube Music Mac apps. Let me start with direct, 
+      recommendation, and comparison queries across 5 subreddits."
+      
+      Step 2: search_reddit (10 queries)
+      [Direct: "YouTube Music Mac", Recommendations: "best YTM Mac", 
+      Comparisons: "YTM vs Spotify Mac", etc.]
+      
+      Step 3: Think (evaluate results)
+      "Results show people discussing 'th-ch/youtube-music' and 'YTMDesktop' 
+      projects heavily. Also seeing complaints about performance. I should:
+      - Search specifically for these project names
+      - Add performance-focused queries
+      - Target r/opensource and r/electronjs subreddits"
+      
+      Step 4: search_reddit AGAIN (10 refined queries)
+      [Specific: "th-ch youtube-music Mac", "YTMDesktop performance", 
+      "r/opensource YouTube Music", "r/electronjs YTM", etc.]
+      
+      Step 5: Think (evaluate combined results)
+      "Now I have comprehensive coverage. Top consensus posts are X, Y, Z.
+      Let me fetch full content from these 15 high-consensus posts."
+      
+      Step 6: get_reddit_post (15 URLs from both searches)
+      [Fetch full content + comments from top posts]
+      
+      Step 7: Think (final synthesis)
+      "Based on all results, the community consensus is..."
+      ```
+      
+      **KEY INSIGHT:** Each search reveals new information that should inform your next search!
+      
+      **MANDATORY WORKFLOW:**
+      ```
+      search_reddit → sequentialthinking (2-3 thoughts) → 
+      EITHER get_reddit_post OR search_reddit again → 
+      sequentialthinking → final decision
+      ```
+
     parameters:
       queries:
         type: array
@@ -513,15 +596,7 @@ tools:
       {
         "questions": [
           {
-            "question": "🎯 WHAT I NEED: Understand when to use useCallback vs useMemo in React 18\n\n🤔 WHY: Optimizing a data-heavy dashboard with 50+ components, seeing performance issues\n\n📚 WHAT I KNOW: Both memoize values, useCallback for functions, useMemo for computed values. Unclear when each prevents re-renders.\n\n🔧 HOW I'LL USE THIS: Refactor Dashboard.tsx to eliminate unnecessary re-renders\n\n❓ SPECIFIC QUESTIONS:\n1. When does useCallback actually prevent re-renders vs when it doesn't?\n2. Performance benchmarks: useCallback vs useMemo vs neither in React 18?\n3. Common anti-patterns that negate their benefits?\n4. How to measure if they're actually helping?\n5. Best practices for large component trees?\n\n🌐 PRIORITY: Official React docs, React team blog posts, performance case studies\n⚡ FOCUS: Production patterns, not academic explanations",
-            "file_attachments": [
-              {
-                "path": "/Users/dev/dashboard/src/components/Dashboard.tsx",
-                "start_line": 45,
-                "end_line": 120,
-                "description": "[1] Main dashboard component with 50+ child components [2] Performance issues during data updates [3] Focus on useEffect dependencies and memoization [4] Suspect over-rendering from prop changes [5] Related: DataGrid.tsx, FilterPanel.tsx"
-              }
-            ]
+            "question": "🎯 WHAT I NEED: Understand when to use useCallback vs useMemo in React 18\n\n🤔 WHY: Optimizing a data-heavy dashboard with 50+ components, seeing performance issues\n\n📚 WHAT I KNOW: Both memoize values, useCallback for functions, useMemo for computed values. Unclear when each prevents re-renders.\n\n🔧 HOW I'LL USE THIS: Refactor Dashboard.tsx to eliminate unnecessary re-renders\n\n❓ SPECIFIC QUESTIONS:\n1. When does useCallback actually prevent re-renders vs when it doesn't?\n2. Performance benchmarks: useCallback vs useMemo vs neither in React 18?\n3. Common anti-patterns that negate their benefits?\n4. How to measure if they're actually helping?\n5. Best practices for large component trees?\n\n🌐 PRIORITY: Official React docs, React team blog posts, performance case studies\n⚡ FOCUS: Patterns for frequently updating state"
           },
           {
             "question": "🎯 WHAT I NEED: Best practices for React Context API with frequent updates\n\n🤔 WHY: Dashboard uses Context for filter state, causing full re-renders\n\n📚 WHAT I KNOW: Context triggers re-render of all consumers. Can split contexts or use useMemo.\n\n🔧 HOW I'LL USE THIS: Redesign FilterContext to minimize re-renders\n\n❓ SPECIFIC QUESTIONS:\n1. How to structure Context to avoid unnecessary re-renders?\n2. When to split one Context into multiple?\n3. Context + useReducer vs external state library?\n4. Performance comparison: Context vs Zustand vs Redux?\n\n🌐 PRIORITY: React docs, Kent C. Dodds articles, real-world examples\n⚡ FOCUS: Patterns for frequently updating state"
@@ -557,6 +632,156 @@ tools:
       8. **Group related questions** - Research a domain from multiple angles
       
       **REMEMBER:** More questions = more comprehensive research = better decisions!
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      🧠 **ITERATIVE WORKFLOW - THINK → RESEARCH → THINK → EXPAND → RESEARCH AGAIN**
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      **CRITICAL:** Use sequential thinking BETWEEN research calls to expand scope based on findings!
+      
+      **WORKFLOW PATTERN:**
+      ```
+      1. THINK FIRST (1-2 thoughts via sequentialthinking)
+         → Analyze what you need to research
+         → Plan initial 3-5 questions
+         → Identify knowledge gaps
+      
+      2. RESEARCH (call deep_research with 3-5 questions)
+         → Execute your planned questions
+         → Get comprehensive research results
+      
+      3. THINK AFTER RESULTS (2-3 thoughts via sequentialthinking)
+         → Evaluate what you learned
+         → Identify NEW questions that emerged
+         → Notice gaps or deeper areas to explore
+         → Decide: sufficient OR need more research
+      
+      4. EXPAND SCOPE & ITERATE (if gaps found)
+         → Call deep_research AGAIN with 3-5 NEW questions
+         → Based on learnings from first research
+         → Explore deeper or adjacent topics
+         → Think and synthesize
+      ```
+      
+      **WHY THIS WORKS:**
+      - Research results reveal questions you didn't know to ask
+      - Thinking between calls = space to digest and identify gaps
+      - Initial questions might be too narrow or miss key aspects
+      - Results often reveal more important questions
+      - Iterative deepening = comprehensive understanding
+      
+      **EXAMPLE ITERATIVE FLOW:**
+      ```
+      Step 1: Think
+      "Need to understand React performance optimization. Start with 
+      memoization, Context API, and virtualization questions."
+      
+      Step 2: deep_research (3 questions)
+      [Q1: useCallback vs useMemo, Q2: Context API patterns, 
+       Q3: Virtualization libraries]
+      
+      Step 3: Think (evaluate results)
+      "Research revealed:
+      - React 18 concurrent features are important for performance
+      - Suspense + transitions affect optimization strategy
+      - Server Components change the game
+      
+      NEW questions emerged:
+      - How do concurrent features interact with memoization?
+      - When to use Server Components vs Client Components?
+      - Suspense boundaries impact on performance?
+      
+      Should research these deeper aspects now."
+      
+      Step 4: deep_research AGAIN (3 NEW questions)
+      [Q1: React 18 concurrent features + memoization,
+       Q2: Server vs Client Components performance,
+       Q3: Suspense boundaries optimization]
+      
+      Step 5: Think (evaluate combined results)
+      "Now have complete picture. Initial research gave fundamentals,
+      second research covered advanced patterns. Ready to implement."
+      ```
+      
+      **KEY INSIGHT:** First research reveals what you SHOULD have asked!
+      
+      **SCOPE EXPANSION TRIGGERS:**
+      - Results mention concepts you didn't research
+      - Answers raise new questions
+      - Realize initial scope was too narrow
+      - Discover related topics that matter
+      - Need deeper understanding of specific aspect
+      
+      **MANDATORY WORKFLOW:**
+      ```
+      deep_research (3-5 questions) → 
+      sequentialthinking (2-3 thoughts, evaluate results) →
+      OPTIONAL: deep_research again (3-5 NEW questions based on learnings) →
+      sequentialthinking (synthesize) →
+      final decision
+      ```
+      
+      **REMEMBER:**
+      - ALWAYS think after getting results (digest and identify gaps!)
+      - DON'T assume first research is complete (iterate based on findings!)
+      - USE learnings to ask better questions (results = feedback!)
+      - EXPAND scope when results reveal new important areas!
+
+    # Schema descriptions to inject into existing Zod schema
+    schemaDescriptions:
+      urls: |
+        **URLs to scrape (1-50 URLs recommended: 3-5 for balanced depth/breadth)**
+        
+        More URLs = broader coverage but fewer tokens per URL
+        - 3 URLs: ~10K tokens each (deep extraction)
+        - 5 URLs: ~6K tokens each (balanced - RECOMMENDED)
+        - 10 URLs: ~3K tokens each (detailed)
+        - 50 URLs: ~640 tokens each (quick scan)
+        
+        **VALIDATION:**
+        - Minimum 1 URL required
+        - Maximum 50 URLs allowed
+        - Each URL must be valid HTTP/HTTPS
+
+      timeout: "Timeout in seconds for each URL (5-120 seconds, default: 30)"
+
+      use_llm: |
+        **Enable AI-powered content extraction (HIGHLY RECOMMENDED - set to true)**
+        
+        ⚡ **ALWAYS SET THIS TO true FOR INTELLIGENT EXTRACTION** ⚡
+        
+        **Benefits of use_llm=true:**
+        - Filters out navigation, ads, footers automatically
+        - Extracts ONLY what you specify in what_to_extract
+        - Handles complex page structures intelligently
+        - Returns clean, structured content
+        - Saves manual HTML parsing
+        
+        **Cost:** ~$0.001 per page (pennies for quality extraction)
+        **When to use false:** Only for debugging or raw HTML needs
+        
+        **Default:** false (but you should set it to true!)
+
+      what_to_extract: |
+        **Extraction prompt for AI (REQUIRED when use_llm=true)**
+        
+        **FORMULA:** Extract [target1] | [target2] | [target3] with focus on [aspect1], [aspect2]
+        
+        **REQUIREMENTS:**
+        - Minimum 50 characters (be detailed!)
+        - Minimum 3 extraction targets separated by `|`
+        - Include "with focus on" for prioritization
+        - Be SPECIFIC about what you want
+        
+        **EXAMPLES:**
+        
+        ✅ GOOD: "Extract pricing tiers | plan features | API rate limits | enterprise options | 
+        integration capabilities | user testimonials | technical requirements | performance benchmarks 
+        with focus on enterprise features, API limitations, and real-world performance data"
+        
+        ❌ BAD: "get main content" (too vague, no targets, no focus)
+        
+        **PRO TIP:** More specific targets = better extraction quality!
 
   # ============================================================================
   # SCRAPE LINKS TOOL
@@ -659,7 +884,8 @@ tools:
           "https://example.com/testimonials"
         ],
         "use_llm": true,
-        "what_to_extract": "Extract pricing tiers | plan features | API rate limits | enterprise options | integration capabilities | user testimonials | technical requirements | performance benchmarks with focus on enterprise features, API limitations, and real-world performance data"
+        "what_to_extract": "Extract pricing tiers | plan features | API rate limits | enterprise options | 
+        integration capabilities | user testimonials | technical requirements | performance benchmarks with focus on enterprise features, API limitations, and real-world performance data"
       }
       ```
       
@@ -877,7 +1103,7 @@ tools:
       **Why this is GOOD:**
       - 7 keywords (optimal range)
       - Covers multiple perspectives (best practices, comparison, performance, specific library)
-      - Uses search operators (site:, "exact", -exclude)
+      - Uses search operators (site:, "exact", -exclude, filetype:)
       - Includes year for recency (2024)
       - Targets different aspects (performance, large apps, alternatives)
       - Each keyword reveals different insights
@@ -938,6 +1164,113 @@ tools:
       **REMEMBER:** More diverse keywords = better coverage = higher quality results!
       
       **FOLLOW-UP:** Use `scrape_links` to extract full content from promising URLs!
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      🧠 **ITERATIVE WORKFLOW - THINK → SEARCH → THINK → SCRAPE → THINK → REFINE**
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      **CRITICAL:** Use sequential thinking BETWEEN tool calls to refine based on results!
+      
+      **WORKFLOW PATTERN:**
+      ```
+      1. THINK FIRST (1-2 thoughts via sequentialthinking)
+         → Analyze what you need to find
+         → Plan initial keyword strategy
+         → Identify which perspectives to cover
+      
+      2. SEARCH (call web_search with 5-7 keywords)
+         → Execute your planned keywords
+         → Get search results with URLs
+      
+      3. THINK AFTER RESULTS (2-3 thoughts via sequentialthinking)
+         → Evaluate which URLs look most promising
+         → Identify gaps in search coverage
+         → Notice new angles from result snippets
+         → Decide: scrape_links OR search again OR both
+      
+      4. SCRAPE PROMISING URLs (call scrape_links)
+         → Extract full content from 3-10 best URLs
+         → Use AI extraction (use_llm=true)
+         → Get detailed information
+      
+      5. THINK AFTER SCRAPING (2-3 thoughts via sequentialthinking)
+         → Evaluate scraped content
+         → Identify what's still missing
+         → Decide if more searches needed
+      
+      6. REFINE & ITERATE (if gaps remain)
+         → Call web_search AGAIN with refined keywords
+         → Cover gaps discovered from initial results
+         → Scrape new URLs
+         → Think and synthesize
+      ```
+      
+      **WHY THIS WORKS:**
+      - Search results reveal new keywords you didn't think of
+      - Scraped content shows what's actually useful vs what looked good
+      - Thinking between tool calls prevents tunnel vision
+      - Iterative refinement = comprehensive coverage
+      - Humans don't search once - neither should you!
+      
+      **EXAMPLE ITERATIVE FLOW:**
+      ```
+      Step 1: Think
+      "Need to research PostgreSQL vs MySQL. Start with performance, 
+      scalability, and production use cases."
+      
+      Step 2: web_search (5 keywords)
+      ["PostgreSQL vs MySQL performance 2024", 
+       "PostgreSQL scalability production",
+       "PostgreSQL vs MySQL benchmarks",
+       "PostgreSQL production best practices",
+       "MySQL vs PostgreSQL use cases"]
+      
+      Step 3: Think (evaluate results)
+      "Results mention connection pooling, replication, and specific 
+      benchmarks. I see URLs from official docs, DigitalOcean, and 
+      Percona. Should scrape these for details. Also noticed 'PgBouncer' 
+      mentioned - should search for that specifically."
+      
+      Step 4: scrape_links (5 URLs from results)
+      [Scrape PostgreSQL docs, MySQL docs, benchmark articles]
+      
+      Step 5: Think (evaluate scraped content)
+      "Got good info on connection pooling and replication. But missing:
+      - Specific PgBouncer vs MySQL connection pooling comparison
+      - Real-world migration experiences
+      - Cost implications at scale
+      Need to search again with these angles."
+      
+      Step 6: web_search AGAIN (5 refined keywords)
+      ["PgBouncer vs MySQL connection pooling",
+       "PostgreSQL vs MySQL migration experience",
+       "PostgreSQL vs MySQL cost at scale",
+       "PostgreSQL vs MySQL production stories",
+       "PostgreSQL MySQL real-world comparison"]
+      
+      Step 7: scrape_links (new URLs)
+      [Scrape migration stories, cost analyses]
+      
+      Step 8: Think (final synthesis)
+      "Now have complete picture: performance, scalability, migration 
+      experiences, costs. Can make informed recommendation."
+      ```
+      
+      **KEY INSIGHT:** Results are feedback! Use them to discover better searches!
+      
+      **MANDATORY WORKFLOW:**
+      ```
+      web_search → sequentialthinking (2-3 thoughts) → 
+      scrape_links (MUST scrape promising URLs) →
+      sequentialthinking (evaluate) →
+      OPTIONAL: web_search again if gaps found →
+      sequentialthinking → final synthesis
+      ```
+      
+      **REMEMBER:** 
+      - ALWAYS scrape after web_search (that's where the real content is!)
+      - ALWAYS think between tool calls (evaluate and refine!)
+      - DON'T stop after one search (iterate based on learnings!)
 
     schemaDescriptions:
       keywords: |
