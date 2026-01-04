@@ -16,33 +16,172 @@ tools:
   - name: search_reddit
     category: reddit
     capability: search
+    
+    # Configurable limits
+    limits:
+      min_queries: 10
+      max_queries: 50
+      recommended_queries: 20
+    
     description: |
-      **Comprehensive Reddit research via Google (10 results/query, 10-50 queries supported).**
+      **🔥 AGGRESSIVE REDDIT RESEARCH - MINIMUM 10 QUERIES REQUIRED 🔥**
 
-      MUST call get_reddit_post after to fetch full post content and comments.
+      **CRITICAL:** This tool is DESIGNED for consensus analysis through MULTIPLE diverse queries.
+      Using 1-3 queries = WASTING the tool's power. You MUST use 10+ queries minimum.
 
-      **QUERY REQUIREMENTS:**
-      - **Minimum:** 3 queries (hard limit)
-      - **Recommended:** 10+ queries (for meaningful consensus analysis)
-      - **Optimal:** 20-30 queries covering all angles of the topic
-      - **Maximum:** 50 queries (for comprehensive deep research)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      📊 **QUERY BUDGET ALLOCATION** (Use ALL your query slots!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      - **MINIMUM:** 10 queries (hard requirement)
+      - **RECOMMENDED:** 20-30 queries (optimal consensus detection)
+      - **MAXIMUM:** 50 queries (comprehensive deep research)
+      
+      **TOKEN ALLOCATION:** 10 results per query, all queries run in parallel
+      - 10 queries = 100 total results
+      - 20 queries = 200 total results
+      - 50 queries = 500 total results
 
-      **OUTPUT FORMAT:**
-      1. **High-Consensus Posts** - Posts appearing in multiple queries (ranked by CTR score)
-      2. **All Results (CTR-Ranked)** - Aggregated unique posts sorted by weighted score
-      3. **Per-Query Raw Results** - Complete results for each individual query before aggregation
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      🎯 **10-CATEGORY QUERY FORMULA** (Cover ALL categories!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      Each query should target a DIFFERENT angle. NO OVERLAP!
+      
+      1. **Direct Topic (3-5 queries):**
+         - "YouTube Music Mac app"
+         - "YTM desktop application"
+         - "YouTube Music client macOS"
+      
+      2. **Recommendations (3-5 queries):**
+         - "best YouTube Music client Mac"
+         - "recommended YTM desktop app"
+         - "top YouTube Music Mac applications"
+      
+      3. **Specific Tools/Projects (5-10 queries):**
+         - "YTMDesktop Mac"
+         - "th-ch youtube-music"
+         - "steve228uk YouTube Music"
+         - "youtube-music-desktop-app GitHub"
+      
+      4. **Comparisons (3-5 queries):**
+         - "YouTube Music vs Spotify Mac desktop"
+         - "YTM vs Apple Music desktop app"
+         - "YouTube Music desktop vs web player"
+      
+      5. **Alternatives (3-5 queries):**
+         - "YouTube Music Mac alternative"
+         - "YTM replacement desktop"
+         - "better than YouTube Music Mac"
+      
+      6. **Subreddit-Specific (5-10 queries):**
+         - "r/YoutubeMusic desktop app"
+         - "r/macapps YouTube Music"
+         - "r/opensource YouTube Music client"
+         - "r/software YouTube Music Mac"
+      
+      7. **Problems/Issues (3-5 queries):**
+         - "YouTube Music desktop app issues"
+         - "YTM Mac app crashes"
+         - "YouTube Music desktop performance problems"
+      
+      8. **Year-Specific for Recency (2-3 queries):**
+         - "best YouTube Music Mac app 2024"
+         - "YouTube Music desktop 2025"
+         - "YTM client 2024 recommendations"
+      
+      9. **Features (3-5 queries):**
+         - "YouTube Music offline Mac"
+         - "YTM lyrics desktop app"
+         - "YouTube Music desktop features"
+      
+      10. **Developer/GitHub (3-5 queries):**
+          - "youtube-music electron app GitHub"
+          - "YTM desktop open source"
+          - "YouTube Music API desktop client"
 
-      **QUERY CRAFTING STRATEGY (aim for 10-50 distinct queries):**
-      - Direct topic variations (3-5 queries)
-      - Recommendation/best-of queries (3-5 queries)
-      - Specific tool/project names (5-10 queries)
-      - Comparison queries (3-5 queries)
-      - Alternative/replacement queries (3-5 queries)
-      - Subreddit-specific queries (5-10 queries)
-      - Problem/issue queries (3-5 queries)
-      - Year-specific queries for recency (2-3 queries)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ❌ **BAD EXAMPLE** (DON'T DO THIS - Wastes the tool!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      ```json
+      {
+        "queries": ["best YouTube Music app"]
+      }
+      ```
+      
+      **Why this is BAD:**
+      - Only 1 query (minimum is 10!)
+      - No diversity (missing 9 other categories)
+      - No subreddit targeting
+      - No year-specific queries
+      - No comparison queries
+      - Misses 90% of available consensus data
 
-      **OPERATORS:** intitle:, "exact phrase", OR, -exclude. Auto-adds site:reddit.com.
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ✅ **GOOD EXAMPLE** (DO THIS - Uses tool properly!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      ```json
+      {
+        "queries": [
+          "YouTube Music Mac app",
+          "YTM desktop application",
+          "best YouTube Music client Mac",
+          "recommended YTM desktop",
+          "YTMDesktop Mac",
+          "th-ch youtube-music",
+          "YouTube Music vs Spotify Mac desktop",
+          "YTM vs Apple Music desktop",
+          "YouTube Music Mac alternative",
+          "r/YoutubeMusic desktop app",
+          "r/macapps YouTube Music",
+          "r/opensource YouTube Music",
+          "YouTube Music desktop issues",
+          "YTM Mac crashes",
+          "best YouTube Music Mac 2024",
+          "YouTube Music desktop 2025",
+          "YouTube Music offline Mac",
+          "YTM lyrics desktop",
+          "youtube-music electron GitHub",
+          "YTM desktop open source"
+        ]
+      }
+      ```
+      
+      **Why this is GOOD:**
+      - 20 queries (optimal range)
+      - Covers ALL 10 categories
+      - Includes subreddit targeting (r/YoutubeMusic, r/macapps, r/opensource)
+      - Includes year-specific (2024, 2025)
+      - Includes comparisons (vs Spotify, vs Apple Music)
+      - Includes problems (issues, crashes)
+      - Includes features (offline, lyrics)
+      - Includes developer angle (GitHub, open source)
+      - Each query targets DIFFERENT angle
+      - Will find high-consensus posts across multiple perspectives
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      💡 **PRO TIPS FOR MAXIMUM EFFECTIVENESS**
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      1. **Use ALL 10 categories** - Each reveals different community perspectives
+      2. **Target specific subreddits** - r/YoutubeMusic, r/macapps, r/opensource, r/software
+      3. **Include year numbers** - "2024", "2025" for recent discussions
+      4. **Add comparison keywords** - "vs", "versus", "compared to", "better than"
+      5. **Include problem keywords** - "issue", "bug", "crash", "slow", "problem"
+      6. **Vary your phrasing** - "best", "top", "recommended", "popular"
+      7. **Use technical terms** - "electron", "GitHub", "API", "open source"
+      8. **NO DUPLICATES** - Each query must be unique
+      
+      **REMEMBER:** More queries = better consensus detection = higher quality results!
+      
+      **OPERATORS SUPPORTED:**
+      - `intitle:` - Search in post titles only
+      - `"exact phrase"` - Match exact phrase
+      - `OR` - Match either term
+      - `-exclude` - Exclude term
+      - Auto-adds `site:reddit.com` to all queries
 
     parameters:
       queries:
@@ -51,46 +190,158 @@ tools:
         items:
           type: string
         validation:
-          minItems: 3
-          maxItems: 50
+          minItems: 10  # HARD MINIMUM - enforced
+          maxItems: 50  # HARD MAXIMUM - enforced
         description: |
-          **3-50 queries for Reddit research.** Minimum 3 required, but generate at least 10 for meaningful consensus. More queries = better consensus detection.
-
-          **QUERY CATEGORIES (aim for coverage across all):**
-
-          1. **Direct Topic (3-5):** "YouTube Music Mac app", "YTM desktop application"
-          2. **Recommendations (3-5):** "best YouTube Music client Mac", "recommended YTM app"
-          3. **Specific Tools (5-10):** "YTMDesktop Mac", "th-ch youtube-music", "steve228uk YT Music"
-          4. **Comparisons (3-5):** "YouTube Music vs Spotify Mac", "YTM vs Apple Music desktop"
-          5. **Alternatives (3-5):** "YouTube Music Mac alternative", "YTM replacement app"
-          6. **Subreddits (5-10):** "r/YoutubeMusic desktop", "r/macapps YouTube Music", "r/opensource YTM"
-          7. **Problems/Issues (3-5):** "YouTube Music desktop performance", "YTM app crashes Mac"
-          8. **Year-Specific (2-3):** "best YouTube Music app 2024", "YTM desktop 2025"
-          9. **Features (3-5):** "YouTube Music offline Mac", "YTM lyrics desktop"
-          10. **Developer/GitHub (3-5):** "youtube-music electron app", "YTM github project"
+          **PROVIDE 10-50 DIVERSE QUERIES** (Minimum 10 required, 20-30 recommended)
+          
+          Each query MUST target a different angle. Use the 10-category formula above.
+          
+          **VALIDATION RULES:**
+          - Minimum 10 queries (you'll get an error with less)
+          - Maximum 50 queries (you'll get an error with more)
+          - Each query should be unique (avoid duplicates)
+          - Cover multiple categories from the 10-category formula
+          
+          **QUICK CHECKLIST:**
+          ✓ At least 10 queries total
+          ✓ Includes direct topic queries
+          ✓ Includes recommendation queries
+          ✓ Includes specific tool names
+          ✓ Includes comparisons (vs, versus)
+          ✓ Includes subreddit targeting (r/...)
+          ✓ Includes year-specific (2024, 2025)
+          ✓ Includes problem keywords (issue, bug, crash)
+          ✓ Includes feature keywords (offline, lyrics, etc.)
+          ✓ Includes developer angle (GitHub, open source)
 
       date_after:
         type: string
         required: false
-        description: "Filter results after date (YYYY-MM-DD). Optional."
+        description: "Filter results after date (YYYY-MM-DD format). Optional. Example: '2024-01-01'"
 
   - name: get_reddit_post
     category: reddit
     capability: reddit
+    
+    # Configurable limits
+    limits:
+      min_urls: 2
+      max_urls: 50
+      recommended_urls: 20
+      default_max_comments: 100
+    
     description: |
-      **Fetch Reddit posts with smart comment allocation (2-50 posts supported).**
+      **🔥 FETCH REDDIT POSTS - MAXIMIZE POST COUNT FOR BROAD PERSPECTIVE 🔥**
 
-      **SMART COMMENT BUDGET:** 1,000 comments distributed across all posts automatically.
-      - 2 posts: ~500 comments/post (deep dive)
-      - 10 posts: 100 comments/post
-      - 50 posts: 20 comments/post (quick scan)
+      **CRITICAL:** This tool fetches 2-50 Reddit posts with smart comment allocation.
+      Using 2-5 posts = MISSING community consensus. Use 10-20+ posts for comprehensive perspective!
 
-      **PARAMETERS:**
-      - `urls`: 2-50 Reddit post URLs. More posts = broader community perspective.
-      - `fetch_comments`: Set to false for post-only queries (faster). Default: true.
-      - `max_comments`: Override auto-allocation if needed.
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      📊 **SMART COMMENT BUDGET** (1,000 comments distributed automatically)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      - 2 posts: ~500 comments/post (deep dive on specific posts)
+      - 10 posts: ~100 comments/post (balanced - GOOD)
+      - 20 posts: ~50 comments/post (broad perspective - RECOMMENDED)
+      - 50 posts: ~20 comments/post (maximum coverage)
+      
+      **Comment allocation is AUTOMATIC** - you don't need to calculate!
 
-      **USE:** After search_reddit. Maximize post count for research breadth. Comment allocation is automatic and optimized.
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      🎯 **WHEN TO USE DIFFERENT POST COUNTS**
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      **2-5 posts:** Deep dive on specific discussions
+      - Use when: You found THE perfect thread and want all comments
+      - Trade-off: Deep but narrow perspective
+      
+      **10-15 posts:** Balanced depth + breadth (GOOD)
+      - Use when: Want good comment depth across multiple discussions
+      - Trade-off: Good balance
+      
+      **20-30 posts:** Broad community perspective (RECOMMENDED)
+      - Use when: Want to see consensus across many discussions
+      - Trade-off: Less comments per post but more diverse opinions
+      
+      **40-50 posts:** Maximum coverage
+      - Use when: Researching controversial topic, need all perspectives
+      - Trade-off: Fewer comments per post but comprehensive coverage
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ❌ **BAD EXAMPLE** (DON'T DO THIS - Misses community consensus!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      ```json
+      {
+        "urls": [
+          "https://reddit.com/r/programming/comments/abc123/best_database/"
+        ],
+        "fetch_comments": true
+      }
+      ```
+      
+      **Why this is BAD:**
+      - Only 1 URL (minimum is 2, should use 10-20+)
+      - Misses other community discussions
+      - Single perspective (could be biased/outdated)
+      - Not using the tool's multi-post aggregation power
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ✅ **GOOD EXAMPLE** (DO THIS - Gets broad community perspective!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      ```json
+      {
+        "urls": [
+          "https://reddit.com/r/programming/comments/abc123/best_database/",
+          "https://reddit.com/r/webdev/comments/def456/database_recommendations/",
+          "https://reddit.com/r/node/comments/ghi789/postgresql_vs_mysql/",
+          "https://reddit.com/r/golang/comments/jkl012/database_choice/",
+          "https://reddit.com/r/rails/comments/mno345/production_database/",
+          "https://reddit.com/r/django/comments/pqr678/database_setup/",
+          "https://reddit.com/r/dotnet/comments/stu901/database_performance/",
+          "https://reddit.com/r/java/comments/vwx234/database_scaling/",
+          "https://reddit.com/r/devops/comments/yza567/database_reliability/",
+          "https://reddit.com/r/aws/comments/bcd890/rds_vs_aurora/",
+          "https://reddit.com/r/selfhosted/comments/efg123/database_hosting/",
+          "https://reddit.com/r/sysadmin/comments/hij456/database_backup/",
+          "https://reddit.com/r/docker/comments/klm789/database_containers/",
+          "https://reddit.com/r/kubernetes/comments/nop012/database_k8s/",
+          "https://reddit.com/r/database/comments/qrs345/postgresql_tips/",
+          "https://reddit.com/r/sql/comments/tuv678/query_optimization/",
+          "https://reddit.com/r/PostgreSQL/comments/wxy901/production_setup/",
+          "https://reddit.com/r/mysql/comments/zab234/performance_tuning/",
+          "https://reddit.com/r/mongodb/comments/cde567/use_cases/",
+          "https://reddit.com/r/redis/comments/fgh890/caching_strategies/"
+        ],
+        "fetch_comments": true,
+        "max_comments": 100
+      }
+      ```
+      
+      **Why this is GOOD:**
+      - 20 posts (optimal for broad perspective)
+      - Covers multiple subreddits (programming, webdev, node, golang, etc.)
+      - Different discussion angles (best practices, vs comparisons, production, performance)
+      - Will reveal community consensus across diverse communities
+      - Automatic comment allocation (~50 comments per post)
+      - Comprehensive coverage of the topic
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      🚀 **PRO TIPS FOR MAXIMUM EFFECTIVENESS**
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      1. **Use 10-20+ posts** - More posts = broader community perspective
+      2. **Mix subreddits** - Different communities have different perspectives
+      3. **Include various discussion types** - Best practices, comparisons, problems, solutions
+      4. **Let comment allocation auto-adjust** - Don't override max_comments unless needed
+      5. **Use after search_reddit** - Get URLs from search, then fetch full content
+      6. **fetch_comments=true** - Comments often have the best insights
+      
+      **REMEMBER:** More posts = better consensus detection = higher confidence in findings!
+      
+      **WORKFLOW:** search_reddit (find posts) → get_reddit_post (fetch full content + comments)
 
     parameters:
       urls:
@@ -101,19 +352,54 @@ tools:
         validation:
           minItems: 2
           maxItems: 50
-        description: "Reddit URLs (2-50). More posts = broader community perspective."
+        description: |
+          **Reddit post URLs (MINIMUM 2, RECOMMENDED 10-20, MAX 50)**
+          
+          More posts = broader community perspective and better consensus detection.
+          
+          **VALIDATION:**
+          - Minimum 2 URLs required
+          - Maximum 50 URLs allowed
+          - Each URL must be a valid Reddit post URL
+          
+          **RECOMMENDED USAGE:**
+          - 2-5 posts: Deep dive on specific discussions
+          - 10-15 posts: Balanced depth + breadth
+          - 20-30 posts: Broad community perspective (RECOMMENDED)
+          - 40-50 posts: Maximum coverage
+          
+          **PRO TIP:** Get URLs from search_reddit results, then fetch full content here!
 
       fetch_comments:
         type: boolean
         required: false
         default: true
-        description: "Fetch comments? Set false for quick post overview. Default: true"
+        description: |
+          **Fetch comments from posts (RECOMMENDED: true)**
+          
+          Comments often contain the BEST insights, solutions, and real-world experiences.
+          
+          **Set to true (default):** Get post + comments
+          **Set to false:** Get post content only (faster but misses insights)
+          
+          **PRO TIP:** Always keep this true unless you only need post titles/content!
 
       max_comments:
         type: number
         required: false
         default: 100
-        description: "Override auto-allocation. Leave empty for smart allocation."
+        description: |
+          **Override automatic comment allocation (DEFAULT: 100, auto-adjusts based on post count)**
+          
+          Leave empty for smart allocation:
+          - 2 posts: ~500 comments/post
+          - 10 posts: ~100 comments/post
+          - 20 posts: ~50 comments/post
+          - 50 posts: ~20 comments/post
+          
+          **Only override if:** You need specific comment depth
+          
+          **PRO TIP:** Let the tool auto-allocate for optimal results!
 
   # ============================================================================
   # DEEP RESEARCH TOOL
@@ -125,139 +411,152 @@ tools:
     # Complex schema - use existing Zod schema, descriptions injected from YAML
     useZodSchema: true
     zodSchemaRef: "deepResearchParamsSchema"
+    
+    # Configurable limits
+    limits:
+      min_questions: 1
+      max_questions: 10
+      recommended_questions: 5
+      min_question_length: 200
+      min_specific_questions: 2
+    
     description: |
-      **Batch deep research (2-10 questions) with dynamic token allocation.**
+      **🔥 BATCH DEEP RESEARCH - USE ALL 10 QUESTION SLOTS FOR COMPREHENSIVE COVERAGE 🔥**
 
-      **TOKEN BUDGET:** 32,000 tokens distributed across all questions:
+      **CRITICAL:** This tool runs 2-10 questions IN PARALLEL with AI-powered research.
+      Using 1-2 questions = WASTING the parallel research capability!
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      📊 **TOKEN BUDGET ALLOCATION** (32,000 tokens distributed across questions)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
       - 2 questions: 16,000 tokens/question (deep dive)
-      - 5 questions: 6,400 tokens/question (balanced)
-      - 10 questions: 3,200 tokens/question (rapid multi-topic)
+      - 5 questions: 6,400 tokens/question (balanced - RECOMMENDED)
+      - 10 questions: 3,200 tokens/question (comprehensive multi-topic)
+      
+      **All questions research in PARALLEL** - no time penalty for more questions!
 
-      **WHEN TO USE:**
-      - Need multi-perspective analysis on related topics
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      🎯 **WHEN TO USE THIS TOOL**
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      ✅ **USE for:**
+      - Multi-perspective analysis on related topics
       - Researching a domain from multiple angles
       - Validating understanding across different aspects
       - Comparing approaches/technologies side-by-side
+      - Deep technical questions requiring comprehensive research
+      
+      ⚠️ **ALWAYS ATTACH FILES when asking about:**
+      - 🐛 Bugs/errors → Attach the failing code
+      - ⚡ Performance issues → Attach the slow code paths
+      - ♻️ Refactoring → Attach current implementation
+      - 🔍 Code review → Attach code to review
+      - 🏗️ Architecture questions about YOUR code → Attach relevant modules
 
-      **EACH QUESTION SHOULD INCLUDE:**
-      - Topic & context (what decision it informs)
-      - Your current understanding (to fill gaps)
-      - Specific sub-questions (2-5 per topic)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      📋 **REQUIRED QUESTION TEMPLATE** (Follow this structure!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      **Each question MUST include these sections:**
+      
+      **1. 🎯 WHAT I NEED:**
+      [Clearly state what you're trying to achieve, solve, or understand]
+      
+      **2. 🤔 WHY I'M RESEARCHING THIS:**
+      [Explain the context - what decision does this inform? What problem are you solving?]
+      
+      **3. 📚 WHAT I ALREADY KNOW:**
+      [Share your current understanding so research fills gaps, not repeats basics]
+      
+      **4. 🔧 HOW I PLAN TO USE THIS:**
+      [Describe the practical application - implementation, debugging, architecture, etc.]
+      
+      **5. ❓ SPECIFIC QUESTIONS (2-5):**
+      - Question 1: [Specific, pointed question]
+      - Question 2: [Another specific question]
+      - Question 3: [etc.]
+      
+      **6. 🌐 PRIORITY SOURCES (optional):**
+      [Sites/docs to prioritize: "Prefer official React docs, GitHub issues, Stack Overflow"]
+      
+      **7. ⚡ PRIORITY INFO (optional):**
+      [What matters most: "Focus on performance implications" or "Prioritize security best practices"]
 
-      **USE:** Maximize question count for comprehensive coverage. All questions run in parallel. Group related questions for coherent research.
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ❌ **BAD EXAMPLE** (DON'T DO THIS - Wastes the tool!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      ```json
+      {
+        "questions": [
+          {
+            "question": "Research React hooks"
+          }
+        ]
+      }
+      ```
+      
+      **Why this is BAD:**
+      - Only 1 question (should use 5-10 for comprehensive coverage)
+      - Too vague ("Research React hooks")
+      - No template sections (missing WHY, WHAT I KNOW, etc.)
+      - No specific sub-questions
+      - No file attachments (if this is about YOUR code)
+      - Wastes 90% of available research capacity
 
-    # Schema descriptions to inject into existing Zod schema
-    schemaDescriptions:
-      questions: |
-        **Batch deep research (2-10 questions) with dynamic token allocation.**
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ✅ **GOOD EXAMPLE** (DO THIS - Uses tool properly!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      ```json
+      {
+        "questions": [
+          {
+            "question": "🎯 WHAT I NEED: Understand when to use useCallback vs useMemo in React 18\n\n🤔 WHY: Optimizing a data-heavy dashboard with 50+ components, seeing performance issues\n\n📚 WHAT I KNOW: Both memoize values, useCallback for functions, useMemo for computed values. Unclear when each prevents re-renders.\n\n🔧 HOW I'LL USE THIS: Refactor Dashboard.tsx to eliminate unnecessary re-renders\n\n❓ SPECIFIC QUESTIONS:\n1. When does useCallback actually prevent re-renders vs when it doesn't?\n2. Performance benchmarks: useCallback vs useMemo vs neither in React 18?\n3. Common anti-patterns that negate their benefits?\n4. How to measure if they're actually helping?\n5. Best practices for large component trees?\n\n🌐 PRIORITY: Official React docs, React team blog posts, performance case studies\n⚡ FOCUS: Production patterns, not academic explanations",
+            "file_attachments": [
+              {
+                "path": "/Users/dev/dashboard/src/components/Dashboard.tsx",
+                "start_line": 45,
+                "end_line": 120,
+                "description": "[1] Main dashboard component with 50+ child components [2] Performance issues during data updates [3] Focus on useEffect dependencies and memoization [4] Suspect over-rendering from prop changes [5] Related: DataGrid.tsx, FilterPanel.tsx"
+              }
+            ]
+          },
+          {
+            "question": "🎯 WHAT I NEED: Best practices for React Context API with frequent updates\n\n🤔 WHY: Dashboard uses Context for filter state, causing full re-renders\n\n📚 WHAT I KNOW: Context triggers re-render of all consumers. Can split contexts or use useMemo.\n\n🔧 HOW I'LL USE THIS: Redesign FilterContext to minimize re-renders\n\n❓ SPECIFIC QUESTIONS:\n1. How to structure Context to avoid unnecessary re-renders?\n2. When to split one Context into multiple?\n3. Context + useReducer vs external state library?\n4. Performance comparison: Context vs Zustand vs Redux?\n\n🌐 PRIORITY: React docs, Kent C. Dodds articles, real-world examples\n⚡ FOCUS: Patterns for frequently updating state"
+          },
+          {
+            "question": "🎯 WHAT I NEED: Virtualization strategy for rendering 10,000+ rows\n\n🤔 WHY: DataGrid component freezes when displaying large datasets\n\n📚 WHAT I KNOW: react-window and react-virtualized exist. Need to understand tradeoffs.\n\n🔧 HOW I'LL USE THIS: Implement virtualization in DataGrid.tsx\n\n❓ SPECIFIC QUESTIONS:\n1. react-window vs react-virtualized in 2024?\n2. How to handle dynamic row heights?\n3. Integration with React 18 concurrent features?\n4. Performance impact of virtualization overhead?\n\n🌐 PRIORITY: Library docs, performance benchmarks, production examples"
+          }
+        ]
+      }
+      ```
+      
+      **Why this is GOOD:**
+      - 3 questions (good coverage, could use up to 10)
+      - Each follows the template structure
+      - Specific context and WHY for each
+      - 2-5 specific sub-questions per topic
+      - File attachments for code-related question
+      - Detailed file descriptions
+      - Focus areas specified
+      - Will get comprehensive, actionable research
 
-        **TOKEN BUDGET:** 32,000 tokens distributed across all questions:
-        - 2 questions: 16,000 tokens/question (deep dive)
-        - 5 questions: 6,400 tokens/question (balanced)
-        - 10 questions: 3,200 tokens/question (rapid multi-topic)
-
-        **WHEN TO USE:**
-        - Need multi-perspective analysis on related topics
-        - Researching a domain from multiple angles
-        - Validating understanding across different aspects
-        - Comparing approaches/technologies side-by-side
-
-        **EACH QUESTION SHOULD INCLUDE:**
-        - Topic & context (what decision it informs)
-        - Your current understanding (to fill gaps)
-        - Specific sub-questions (2-5 per topic)
-
-        **USE:** Maximize question count for comprehensive coverage. All questions run in parallel. Group related questions for coherent research.
-
-      "questions.items.question": |
-        **[REQUIRED] Your research question - MUST follow this structured template:**
-
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        📋 **STRUCTURED QUESTION TEMPLATE** (You MUST use this format)
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        **1. 🎯 WHAT I NEED:**
-        [Clearly state what you're trying to achieve, solve, or understand]
-
-        **2. 🤔 WHY I'M RESEARCHING THIS:**
-        [Explain the context - what decision does this inform? What problem are you solving?]
-
-        **3. 📚 WHAT I ALREADY KNOW:**
-        [Share your current understanding so research fills gaps, not repeats basics]
-
-        **4. 🔧 HOW I PLAN TO USE THIS:**
-        [Describe the practical application - implementation, debugging, architecture, etc.]
-
-        **5. ❓ SPECIFIC QUESTIONS (2-5):**
-        - Question 1: [Specific, pointed question]
-        - Question 2: [Another specific question]
-        - Question 3: [etc.]
-
-        **6. 🌐 PRIORITY SOURCES (optional):**
-        [Sites/docs to prioritize: "Prefer official React docs, GitHub issues, Stack Overflow"]
-
-        **7. ⚡ PRIORITY INFO (optional):**
-        [What matters most: "Focus on performance implications" or "Prioritize security best practices"]
-
-      "questions.items.file_attachments": |
-        **[CRITICAL FOR BUGS/CODE QUESTIONS] File attachments to include as research context.**
-
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        ⚠️ **YOU MUST ATTACH FILES WHEN:**
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        ✅ **MANDATORY file attachment scenarios:**
-        - 🐛 **Bug investigation** → Attach the buggy code file(s)
-        - 🔍 **Code review** → Attach the code to be reviewed
-        - ♻️ **Refactoring** → Attach current implementation
-        - 🏗️ **Architecture questions about YOUR code** → Attach relevant modules
-        - ⚡ **Performance issues** → Attach the slow code paths
-        - 🔒 **Security review** → Attach the security-sensitive code
-        - 🧪 **Testing questions** → Attach both the code AND test files
-        - 🔗 **Integration issues** → Attach files from both sides of the integration
-
-        ❌ **File attachments NOT needed for:**
-        - General concept questions ("What is CQRS?")
-        - Technology comparisons ("React vs Vue")
-        - Best practices research (unless about your specific code)
-        - Documentation lookups
-
-      "questions.items.file_attachments.items.path": |
-        **[REQUIRED] Absolute file path to attach.**
-
-        ⚠️ **YOU MUST USE ABSOLUTE PATHS** - e.g., "/Users/john/project/src/utils/auth.ts" NOT "src/utils/auth.ts"
-
-        The file will be read from the filesystem and included as context for the research question. This is CRITICAL for:
-        - Bug investigations (attach the failing code)
-        - Code reviews (attach the code to review)
-        - Refactoring questions (attach current implementation)
-        - Architecture decisions (attach relevant modules)
-        - Performance issues (attach the slow code path)
-
-        **IMPORTANT:** Always use the full absolute path as shown in your IDE or terminal.
-
-      "questions.items.file_attachments.items.start_line": |
-        **[OPTIONAL] Start line number (1-indexed).**
-
-        Use this to focus on a specific section of a large file. If omitted, reads from line 1.
-        Example: start_line=50 with end_line=100 reads lines 50-100 only.
-
-      "questions.items.file_attachments.items.end_line": |
-        **[OPTIONAL] End line number (1-indexed).**
-
-        Use this to limit the scope to relevant code sections. If omitted, reads to end of file.
-        For large files (>500 lines), consider specifying a range to focus the research.
-
-      "questions.items.file_attachments.items.description": |
-        **[HIGHLY RECOMMENDED] Comprehensive description of why this file is attached and what to focus on.**
-
-        ⚠️ **THIS IS CRITICAL FOR EFFECTIVE RESEARCH.** Write a detailed description explaining:
-
-        1. **What this file is:** "This is the main authentication middleware that handles JWT validation"
-        2. **Why it's relevant:** "The bug occurs when tokens expire during long-running requests"
-        3. **What to focus on:** "Pay attention to the refreshToken() function on lines 45-80"
-        4. **Known issues/context:** "We suspect the race condition happens in the async validation"
-        5. **Related files:** "This interacts with /src/services/token-service.ts for token refresh"
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      🚀 **PRO TIPS FOR MAXIMUM EFFECTIVENESS**
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      1. **Use 5-10 questions** - Maximize parallel research capacity
+      2. **Follow the template** - Include all 7 sections for each question
+      3. **Be specific** - Include version numbers, error codes, library names
+      4. **Add 2-5 sub-questions** - Break down what you need to know
+      5. **Attach files for code questions** - MANDATORY for bugs/performance/refactoring
+      6. **Describe files thoroughly** - Use numbered sections [1] [2] [3] [4] [5]
+      7. **Specify focus areas** - "Focus on X, Y, Z" for prioritization
+      8. **Group related questions** - Research a domain from multiple angles
+      
+      **REMEMBER:** More questions = more comprehensive research = better decisions!
 
   # ============================================================================
   # SCRAPE LINKS TOOL
@@ -268,31 +567,212 @@ tools:
     capability: scraping
     useZodSchema: true
     zodSchemaRef: "scrapeLinksParamsSchema"
+    
+    # Configurable limits
+    limits:
+      min_urls: 1
+      max_urls: 50
+      recommended_urls: 5
+      min_extraction_prompt_length: 50
+      min_extraction_targets: 3
+    
     description: |
-      **Universal URL content extraction (3-50 URLs) with dynamic token allocation.**
+      **🔥 INTELLIGENT WEB SCRAPING - ALWAYS USE AI EXTRACTION 🔥**
 
-      **TOKEN ALLOCATION:** 32,000 tokens distributed across all URLs automatically.
+      **CRITICAL:** This tool has TWO modes:
+      1. **Basic scraping** (use_llm=false) - Gets raw HTML/text
+      2. **AI-powered extraction** (use_llm=true) - Intelligently extracts what you need ⭐ **USE THIS!**
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ⚡ **ALWAYS SET use_llm=true FOR INTELLIGENT EXTRACTION** ⚡
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      **Why use AI extraction:**
+      - Filters out navigation, ads, footers automatically
+      - Extracts ONLY what you specify
+      - Handles complex page structures
+      - Returns clean, structured content
+      - Saves you from parsing HTML manually
+      
+      **Cost:** Minimal (~$0.01 per 10 pages with quality extraction)
+      **Benefit:** 10x better results than raw scraping
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      📊 **TOKEN ALLOCATION** (32,000 tokens distributed across URLs)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
       - 3 URLs: ~10,666 tokens/URL (deep extraction)
-      - 10 URLs: 3,200 tokens/URL (detailed)
-      - 50 URLs: 640 tokens/URL (high-level scan)
+      - 5 URLs: ~6,400 tokens/URL (balanced - RECOMMENDED)
+      - 10 URLs: ~3,200 tokens/URL (detailed)
+      - 50 URLs: ~640 tokens/URL (high-level scan)
+      
+      **AUTOMATIC FALLBACK:** Basic → JavaScript rendering → JavaScript + US geo-targeting
+      **BATCHING:** Max 30 concurrent requests (50 URLs = [30] then [20] batches)
 
-      **AUTOMATIC FALLBACK:** Basic → JavaScript → JavaScript+US geo-targeting.
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      🎯 **EXTRACTION PROMPT FORMULA** (Use OR statements for multiple targets!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      **Template:**
+      ```
+      Extract [target1] | [target2] | [target3] | [target4] | [target5]
+      with focus on [aspect1], [aspect2], [aspect3]
+      ```
+      
+      **Rules:**
+      - Use pipe `|` to separate extraction targets (minimum 3 targets)
+      - Be SPECIFIC about what you want
+      - Include "with focus on" for prioritization
+      - More targets = more comprehensive extraction
+      - Aim for 5-10 extraction targets
 
-      **AI EXTRACTION:** Set use_llm=true with what_to_extract for intelligent filtering. Extraction is concise + comprehensive (high info density).
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ❌ **BAD EXAMPLE** (DON'T DO THIS - Wastes AI extraction!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      ```json
+      {
+        "urls": ["https://example.com/pricing"],
+        "use_llm": false,
+        "what_to_extract": "get pricing"
+      }
+      ```
+      
+      **Why this is BAD:**
+      - use_llm=false (missing AI extraction!)
+      - Vague extraction prompt ("get pricing")
+      - Only 1 extraction target
+      - No focus areas specified
+      - Will return messy HTML instead of clean data
 
-      **BATCHING:** Max 30 concurrent requests. 50 URLs = [30] then [20] batches.
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ✅ **GOOD EXAMPLE** (DO THIS - Uses AI extraction properly!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      ```json
+      {
+        "urls": [
+          "https://example.com/pricing",
+          "https://example.com/features",
+          "https://example.com/docs/api",
+          "https://example.com/enterprise",
+          "https://example.com/testimonials"
+        ],
+        "use_llm": true,
+        "what_to_extract": "Extract pricing tiers | plan features | API rate limits | enterprise options | integration capabilities | user testimonials | technical requirements | performance benchmarks with focus on enterprise features, API limitations, and real-world performance data"
+      }
+      ```
+      
+      **Why this is GOOD:**
+      - use_llm=true ✓ (AI extraction enabled!)
+      - 5 URLs (balanced depth/breadth)
+      - 8 extraction targets separated by `|`
+      - Specific targets (pricing tiers, API rate limits, etc.)
+      - Focus areas specified (enterprise, API, performance)
+      - Will return clean, structured extraction
+      - Covers multiple aspects of the product
 
-      **USE:** Provide 3-50 URLs. More URLs = broader coverage, fewer tokens per URL. Choose based on research scope. Maximize URL count for comprehensive research.
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      💡 **EXTRACTION PROMPT EXAMPLES BY USE CASE**
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      **Product Research:**
+      ```
+      Extract pricing details | feature comparisons | user reviews | technical specifications | 
+      integration options | support channels | deployment models | security features 
+      with focus on enterprise capabilities, pricing transparency, and integration complexity
+      ```
+      
+      **Technical Documentation:**
+      ```
+      Extract API endpoints | authentication methods | rate limits | error codes | 
+      request examples | response schemas | SDK availability | webhook support 
+      with focus on authentication flow, rate limiting policies, and error handling patterns
+      ```
+      
+      **Competitive Analysis:**
+      ```
+      Extract product features | pricing models | target customers | unique selling points | 
+      technology stack | customer testimonials | case studies | market positioning 
+      with focus on differentiators, pricing strategy, and customer satisfaction
+      ```
+      
+      **Content Research:**
+      ```
+      Extract main arguments | supporting evidence | data points | expert quotes | 
+      methodology | conclusions | references | publication date 
+      with focus on credibility, data quality, and actionable insights
+      ```
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      🚀 **PRO TIPS FOR MAXIMUM EFFECTIVENESS**
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      1. **ALWAYS use use_llm=true** - The AI extraction is the tool's superpower
+      2. **Use 3-10 URLs** - Balance between depth and breadth
+      3. **Specify 5-10 extraction targets** - More targets = more comprehensive
+      4. **Use pipe `|` separators** - Clearly separate each target
+      5. **Add focus areas** - "with focus on X, Y, Z" for prioritization
+      6. **Be specific** - "pricing tiers" not "pricing", "API rate limits" not "API info"
+      7. **Think parallel extraction** - Each target extracts independently
+      8. **Cover multiple aspects** - Features, pricing, technical, social proof
+      
+      **REMEMBER:** AI extraction costs pennies but saves hours of manual parsing!
 
     schemaDescriptions:
       urls: |
-        URLs to scrape (1-50). Recommend 3-5 URLs for balanced depth/breadth. More URLs = broader coverage but fewer tokens per URL. 3 URLs: ~10K tokens each (deep); 10 URLs: ~3K tokens each (balanced); 50 URLs: ~640 tokens each (scan).
+        **URLs to scrape (1-50 URLs recommended: 3-5 for balanced depth/breadth)**
+        
+        More URLs = broader coverage but fewer tokens per URL
+        - 3 URLs: ~10K tokens each (deep extraction)
+        - 5 URLs: ~6K tokens each (balanced - RECOMMENDED)
+        - 10 URLs: ~3K tokens each (detailed)
+        - 50 URLs: ~640 tokens each (quick scan)
+        
+        **VALIDATION:**
+        - Minimum 1 URL required
+        - Maximum 50 URLs allowed
+        - Each URL must be valid HTTP/HTTPS
 
-      timeout: "Timeout in seconds for each URL"
+      timeout: "Timeout in seconds for each URL (5-120 seconds, default: 30)"
 
-      use_llm: "Enable AI processing for content extraction (requires OPENROUTER_API_KEY)"
+      use_llm: |
+        **Enable AI-powered content extraction (HIGHLY RECOMMENDED - set to true)**
+        
+        ⚡ **ALWAYS SET THIS TO true FOR INTELLIGENT EXTRACTION** ⚡
+        
+        **Benefits of use_llm=true:**
+        - Filters out navigation, ads, footers automatically
+        - Extracts ONLY what you specify in what_to_extract
+        - Handles complex page structures intelligently
+        - Returns clean, structured content
+        - Saves manual HTML parsing
+        
+        **Cost:** ~$0.001 per page (pennies for quality extraction)
+        **When to use false:** Only for debugging or raw HTML needs
+        
+        **Default:** false (but you should set it to true!)
 
-      what_to_extract: "Specific content extraction instructions for AI. Will be enhanced with conciseness suffix automatically."
+      what_to_extract: |
+        **Extraction prompt for AI (REQUIRED when use_llm=true)**
+        
+        **FORMULA:** Extract [target1] | [target2] | [target3] with focus on [aspect1], [aspect2]
+        
+        **REQUIREMENTS:**
+        - Minimum 50 characters (be detailed!)
+        - Minimum 3 extraction targets separated by `|`
+        - Include "with focus on" for prioritization
+        - Be SPECIFIC about what you want
+        
+        **EXAMPLES:**
+        
+        ✅ GOOD: "Extract pricing tiers | plan features | API rate limits | enterprise options | 
+        integration capabilities | user testimonials | technical requirements | performance benchmarks 
+        with focus on enterprise features, API limitations, and real-world performance data"
+        
+        ❌ BAD: "get main content" (too vague, no targets, no focus)
+        
+        **PRO TIP:** More specific targets = better extraction quality!
 
   # ============================================================================
   # WEB SEARCH TOOL
@@ -303,17 +783,193 @@ tools:
     capability: search
     useZodSchema: true
     zodSchemaRef: "webSearchParamsSchema"
+    
+    # Configurable limits
+    limits:
+      min_keywords: 3
+      max_keywords: 100
+      recommended_keywords: 7
+    
     description: |
-      **Batch web search** using Google via SERPER API. Search up to 100 keywords in parallel, get top 10 results per keyword with snippets, links, and related searches.
+      **🔥 BATCH WEB SEARCH - MINIMUM 3 KEYWORDS, RECOMMENDED 5-7 🔥**
 
-      **FEATURES:**
-      - Supports Google search operators (site:, -exclusion, "exact phrase", filetype:)
-      - Returns clickable markdown links with snippets
-      - Provides related search suggestions
-      - Identifies frequently appearing URLs across queries
+      **CRITICAL:** This tool searches up to 100 keywords IN PARALLEL via Google.
+      Using 1-2 keywords = WASTING the tool's parallel search power!
 
-      **USE:** For research tasks requiring multiple perspectives. Use distinct keywords to maximize coverage. Follow up with scrape_links to extract full content from promising URLs.
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      📊 **KEYWORD BUDGET** (Use multiple perspectives!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      - **MINIMUM:** 3 keywords (hard requirement)
+      - **RECOMMENDED:** 5-7 keywords (optimal diversity)
+      - **MAXIMUM:** 100 keywords (comprehensive research)
+      
+      **RESULTS:** 10 results per keyword, all searches run in parallel
+      - 3 keywords = 30 total results
+      - 7 keywords = 70 total results  
+      - 100 keywords = 1000 total results
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      🎯 **KEYWORD DIVERSITY FORMULA** (Cover different angles!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      Each keyword should target a DIFFERENT perspective:
+      
+      1. **Direct/Broad:** "React state management"
+      2. **Specific/Technical:** "React useReducer vs Redux"
+      3. **Problem-Focused:** "React state management performance issues"
+      4. **Best Practices:** "React state management best practices 2024"
+      5. **Comparison:** "React state management libraries comparison"
+      6. **Tutorial/Guide:** "React state management tutorial"
+      7. **Advanced:** "React state management patterns large applications"
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      🔧 **SEARCH OPERATORS** (Use these for precision!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      - `site:domain.com` - Search within specific site
+      - `"exact phrase"` - Match exact phrase
+      - `-exclude` - Exclude term
+      - `filetype:pdf` - Find specific file types
+      - `OR` - Match either term
+      
+      **Examples:**
+      - `"React hooks" site:github.com` - React hooks repos on GitHub
+      - `React state management -Redux` - Exclude Redux results
+      - `React tutorial filetype:pdf` - Find React PDF tutorials
+      - `React OR Vue state management` - Compare frameworks
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ❌ **BAD EXAMPLE** (DON'T DO THIS - Wastes parallel search!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      ```json
+      {
+        "keywords": ["React"]
+      }
+      ```
+      
+      **Why this is BAD:**
+      - Only 1 keyword (minimum is 3!)
+      - Too broad/vague
+      - No search operators
+      - No diversity (missing 6 other perspectives)
+      - Misses specific, technical, and comparison results
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ✅ **GOOD EXAMPLE** (DO THIS - Uses parallel search properly!)
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      ```json
+      {
+        "keywords": [
+          "React state management best practices",
+          "React useReducer vs Redux 2024",
+          "React Context API performance",
+          "Zustand React state library",
+          "React state management large applications",
+          "\"React state\" site:github.com",
+          "React global state alternatives -Redux"
+        ]
+      }
+      ```
+      
+      **Why this is GOOD:**
+      - 7 keywords (optimal range)
+      - Covers multiple perspectives (best practices, comparison, performance, specific library)
+      - Uses search operators (site:, "exact", -exclude)
+      - Includes year for recency (2024)
+      - Targets different aspects (performance, large apps, alternatives)
+      - Each keyword reveals different insights
+      - Will find diverse, high-quality results
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      💡 **KEYWORD CRAFTING STRATEGIES BY USE CASE**
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      **Technology Research:**
+      ```json
+      [
+        "PostgreSQL vs MySQL performance 2024",
+        "PostgreSQL best practices production",
+        "\"PostgreSQL\" site:github.com stars:>1000",
+        "PostgreSQL connection pooling",
+        "PostgreSQL performance tuning",
+        "PostgreSQL vs MongoDB use cases",
+        "PostgreSQL replication setup"
+      ]
+      ```
+      
+      **Problem Solving:**
+      ```json
+      [
+        "Docker container memory leak debugging",
+        "Docker memory limit not working",
+        "\"Docker OOM\" site:stackoverflow.com",
+        "Docker container resource monitoring",
+        "Docker memory optimization best practices"
+      ]
+      ```
+      
+      **Comparison Research:**
+      ```json
+      [
+        "Next.js vs Remix performance",
+        "Next.js 14 vs Remix 2024",
+        "\"Next.js\" OR \"Remix\" benchmarks",
+        "Next.js Remix migration guide",
+        "Next.js vs Remix developer experience"
+      ]
+      ```
+
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      🚀 **PRO TIPS FOR MAXIMUM EFFECTIVENESS**
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      1. **Use 5-7 keywords minimum** - Each reveals different perspective
+      2. **Add year numbers** - "2024", "2025" for recent content
+      3. **Use search operators** - site:, "exact", -exclude, filetype:
+      4. **Vary specificity** - Mix broad + specific keywords
+      5. **Include comparisons** - "vs", "versus", "compared to", "OR"
+      6. **Target sources** - site:github.com, site:stackoverflow.com
+      7. **Add context** - "best practices", "tutorial", "production", "performance"
+      8. **Think parallel** - Each keyword searches independently
+      
+      **REMEMBER:** More diverse keywords = better coverage = higher quality results!
+      
+      **FOLLOW-UP:** Use `scrape_links` to extract full content from promising URLs!
 
     schemaDescriptions:
       keywords: |
-        Array of search keywords (1-100 keywords). Recommend 3-7 keywords for comprehensive research. Supports Google search operators (site:, -exclusion, "exact phrase", filetype:). More keywords = broader coverage and diverse perspectives.
+        **Array of search keywords (MINIMUM 3, RECOMMENDED 5-7, MAX 100)**
+        
+        Each keyword runs as a separate Google search in parallel.
+        
+        **VALIDATION:**
+        - Minimum 3 keywords required
+        - Maximum 100 keywords allowed
+        - Each keyword should target different angle
+        
+        **DIVERSITY CHECKLIST:**
+        ✓ Includes broad keyword
+        ✓ Includes specific/technical keyword
+        ✓ Includes comparison keyword (vs, OR)
+        ✓ Includes best practices keyword
+        ✓ Includes year-specific keyword (2024, 2025)
+        ✓ Uses search operators (site:, "exact", -exclude)
+        ✓ Targets specific sources (GitHub, Stack Overflow, docs)
+        
+        **SEARCH OPERATORS:**
+        - `site:domain.com` - Search within site
+        - `"exact phrase"` - Match exact phrase
+        - `-exclude` - Exclude term
+        - `filetype:pdf` - Find file type
+        - `OR` - Match either term
+        
+        **EXAMPLES:**
+        
+        ✅ GOOD: ["React hooks best practices", "React useEffect vs useLayoutEffect", 
+        "\"React hooks\" site:github.com", "React hooks performance 2024", 
+        "React custom hooks patterns", "React hooks -class components"]
+        
+        ❌ BAD: ["React"] (too vague, only 1 keyword, no diversity)

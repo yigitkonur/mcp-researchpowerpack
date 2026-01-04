@@ -626,7 +626,9 @@ npm run typecheck
 
 ## 🏗️ Architecture (v3.4.0+)
 
-The codebase uses a **YAML-driven configuration system** for maintainability:
+The codebase uses a **YAML-driven configuration system** with **aggressive LLM optimization** (v3.5.0+):
+
+### Core Architecture
 
 | Component | File | Purpose |
 |-----------|------|---------|
@@ -641,6 +643,27 @@ The codebase uses a **YAML-driven configuration system** for maintainability:
 3. Register in `src/tools/registry.ts`
 
 See `docs/refactoring/04-migration-guide.md` for detailed instructions.
+
+### LLM Optimization (v3.5.0+)
+
+All tools include **aggressive guidance** to force LLMs to use them optimally:
+
+| Feature | Description |
+|---------|-------------|
+| **Configurable Limits** | All min/max values in YAML (`limits` section) |
+| **BAD vs GOOD Examples** | Every tool shows anti-patterns and perfect usage |
+| **Aggressive Phrasing** | Changed from "you can" to "you MUST" |
+| **Visual Formatting** | Emoji headers (🔥), section dividers (━━━), icons (📊🎯❌✅) |
+| **Templates** | Structured formats for questions, extractions, file descriptions |
+
+**Key Enhancements:**
+- `search_reddit`: Minimum 10 queries (was 3), 10-category formula
+- `deep_research`: 7-section question template, file attachment requirements
+- `scrape_links`: Extraction template with OR statements, use_llm=true push
+- `web_search`: Minimum 3 keywords, search operator examples
+- `file_attachments`: Numbered 5-section description template
+
+See `docs/refactoring/07-llm-optimization-summary.md` for full details.
 
 ---
 

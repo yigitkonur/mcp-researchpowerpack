@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-01-04
+
+### Added - LLM Optimization & Aggressive Guidance
+
+- **Aggressive Tool Descriptions** - Transformed all tool descriptions from passive to directive
+  - `search_reddit`: Minimum 10 queries enforced (was 3), added 10-category query formula
+  - `get_reddit_post`: Stress on using 10-20+ posts for consensus (was 2+)
+  - `deep_research`: Enhanced template with numbered sections, file attachment requirements
+  - `scrape_links`: Aggressive push for `use_llm=true`, extraction template with OR statements
+  - `web_search`: Minimum 3 keywords enforced, search operator examples
+
+- **BAD vs GOOD Examples** - Every tool now shows anti-patterns and perfect examples
+  - Visual comparison with ❌ BAD and ✅ GOOD sections
+  - Explains WHY each example is bad/good
+  - Provides actionable fixes for common mistakes
+
+- **Configurable Limits in YAML** - All limits moved to YAML configuration
+  - `limits` section in each tool definition
+  - `min_queries`, `max_queries`, `recommended_queries` for search_reddit
+  - `min_urls`, `max_urls`, `recommended_urls` for scrape_links and get_reddit_post
+  - `min_keywords`, `max_keywords`, `recommended_keywords` for web_search
+  - `min_questions`, `max_questions`, `recommended_questions` for deep_research
+
+- **File Attachment Template** - Numbered 5-section format for file descriptions
+  - [1] What this file is
+  - [2] Why it's relevant
+  - [3] What to focus on
+  - [4] Known issues/context
+  - [5] Related files
+  - Includes examples for bugs, performance, refactoring, architecture scenarios
+
+- **Extraction Prompt Templates** - Comprehensive guidance for scrape_links
+  - OR-statement formula: "Extract [target1] | [target2] | [target3]"
+  - Examples by use case (product research, technical docs, competitive analysis)
+  - Minimum 3 extraction targets recommended
+
+- **Query Crafting Strategies** - Detailed examples for search_reddit and web_search
+  - Technology research examples
+  - Problem-solving examples
+  - Comparison research examples
+  - Search operator usage (site:, "exact", -exclude, filetype:, OR)
+
+### Changed
+
+- **Tool Descriptions** - Increased verbosity and directiveness
+  - Added 🔥 emoji headers for critical requirements
+  - Added ━━━ section dividers for readability
+  - Added emoji icons (📊, 🎯, ❌, ✅, 💡, 🚀) for visual scanning
+  - Changed from "you can" to "you MUST" phrasing
+  - Increased emphasis on parallel processing benefits
+
+- **Validation Requirements** - Stricter minimum requirements
+  - `search_reddit`: 3 → 10 minimum queries
+  - `web_search`: 1 → 3 minimum keywords
+  - All tools: Added recommended ranges
+
+### Documentation
+
+- Added `docs/refactoring/06-validation-system-design.md` - Validation architecture
+- Added `docs/refactoring/07-llm-optimization-summary.md` - Quick reference guide
+
 ## [3.4.0] - 2026-01-04
 
 ### Added
