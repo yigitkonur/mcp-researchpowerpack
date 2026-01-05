@@ -379,6 +379,7 @@ tools:
       recommended_urls: 5
       min_extraction_prompt_length: 50
       min_extraction_targets: 3
+      extraction_suffix: "Try to answer this information as comprehensive as possible while keeping info density super high without adding unnecessary words but satisfy the scope defined by previous instructions even more."
     
     description: |
       **🔥 WEB SCRAPING - 1-50 URLs, RECOMMENDED 3-5. ALWAYS use_llm=true**

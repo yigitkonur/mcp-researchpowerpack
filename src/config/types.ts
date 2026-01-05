@@ -63,6 +63,9 @@ export interface YamlToolConfig {
 
   // Description overrides for existing Zod schemas
   schemaDescriptions?: Record<string, string>;
+
+  // Configurable limits and settings
+  limits?: Record<string, string | number | boolean>;
 }
 
 /**

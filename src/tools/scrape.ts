@@ -9,7 +9,14 @@ import { MarkdownCleaner } from '../services/markdown-cleaner.js';
 import { createLLMProcessor, processContentWithLLM } from '../services/llm-processor.js';
 import { removeMetaTags } from '../utils/markdown-formatter.js';
 import { SCRAPER } from '../config/index.js';
+import { getToolConfig } from '../config/loader.js';
 import { classifyError } from '../utils/errors.js';
+
+// Get extraction suffix from YAML config (fallback to hardcoded if not found)
+function getExtractionSuffix(): string {
+  const config = getToolConfig('scrape_links');
+  return config?.limits?.extraction_suffix as string || SCRAPER.EXTRACTION_SUFFIX;
+}
 
 interface ToolOptions {
   sessionId?: string;
@@ -23,7 +30,7 @@ function calculateTokenAllocation(urlCount: number): number {
 
 function enhanceExtractionInstruction(instruction: string | undefined): string {
   const base = instruction || 'Extract the main content and key information from this page.';
-  return `${base}\n\n${SCRAPER.EXTRACTION_SUFFIX}`;
+  return `${base}\n\n${getExtractionSuffix()}`;
 }
 
 /**
