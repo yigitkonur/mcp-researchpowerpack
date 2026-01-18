@@ -87,15 +87,13 @@ jobs:
           git push --tags
           echo "✅ Bumped to v$NEW_VERSION and pushed"
 
-      - name: Publish to NPM
+      - name: Publish to NPM (OIDC)
         if: steps.version_check.outputs.exists == 'false' || steps.bump.outputs.bumped == 'true'
         run: |
           PUBLISH_VERSION=$(node -p "require('./package.json').version")
-          echo "📦 Publishing v$PUBLISH_VERSION to npm..."
+          echo "📦 Publishing v$PUBLISH_VERSION to npm using OIDC..."
           npm publish --access public --provenance
           echo "✅ Successfully published v$PUBLISH_VERSION"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         if: steps.bump.outputs.bumped == 'true'
