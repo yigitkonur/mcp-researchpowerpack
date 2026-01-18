@@ -145,6 +145,11 @@ export async function handleGetRedditPosts(
     const batchResult = await client.batchGetPosts(urls, commentsPerPost, fetchComments);
     const results = batchResult.results;
 
+    // Initialize LLM processor if needed (before the loop for per-URL processing)
+    const llmProcessor = use_llm ? createLLMProcessor() : null;
+    const tokensPerUrl = use_llm ? Math.floor(32000 / urls.length) : 0;
+    const enhancedInstruction = use_llm ? enhanceExtractionInstruction(what_to_extract) : undefined;
+
     let md = `# Reddit Posts (${urls.length} posts)\n\n`;
 
     if (fetchComments) {
@@ -152,52 +157,60 @@ export async function handleGetRedditPosts(
     } else {
       md += `**Comments:** Not fetched (fetch_comments=false)\n`;
     }
+    if (use_llm) {
+      md += `**Token Allocation:** ${tokensPerUrl.toLocaleString()} tokens/post (${urls.length} posts, 32,000 total budget)\n`;
+    }
     md += `**Status:** 📦 ${totalBatches} batch(es) processed\n\n`;
     md += `---\n\n`;
 
     let successful = 0;
     let failed = 0;
+    let llmErrors = 0;
+    const contents: string[] = [];
 
     for (const [url, result] of results) {
       if (result instanceof Error) {
         failed++;
-        md += `## ❌ Failed: ${url}\n\n_${result.message}_\n\n---\n\n`;
+        contents.push(`## ❌ Failed: ${url}\n\n_${result.message}_`);
       } else {
         successful++;
-        md += formatPost(result, fetchComments);
-        md += '\n---\n\n';
+        let postContent = formatPost(result, fetchComments);
+
+        // Apply LLM extraction per-URL if enabled
+        if (use_llm && llmProcessor) {
+          console.error(`[Reddit Tool] [${successful}/${urls.length}] Applying LLM extraction to ${url} (${tokensPerUrl} tokens)...`);
+
+          const llmResult = await processContentWithLLM(
+            postContent,
+            { use_llm: true, what_to_extract: enhancedInstruction, max_tokens: tokensPerUrl },
+            llmProcessor
+          );
+
+          if (llmResult.processed) {
+            postContent = `## LLM Analysis: ${result.post.title}\n\n**r/${result.post.subreddit}** • u/${result.post.author} • ⬆️ ${result.post.score} • 💬 ${result.post.commentCount} comments\n🔗 ${result.post.url}\n\n${llmResult.content}`;
+            console.error(`[Reddit Tool] [${successful}/${urls.length}] LLM extraction complete`);
+          } else {
+            llmErrors++;
+            console.error(`[Reddit Tool] [${successful}/${urls.length}] LLM extraction failed: ${llmResult.error || 'unknown reason'}`);
+            // Continue with original content - graceful degradation
+          }
+        }
+
+        contents.push(postContent);
       }
     }
 
-    md += `\n**Summary:** ✅ ${successful} successful | ❌ ${failed} failed`;
+    md += contents.join('\n\n---\n\n');
+
+    md += `\n\n---\n\n**Summary:** ✅ ${successful} successful | ❌ ${failed} failed`;
     if (batchResult.rateLimitHits > 0) {
       md += ` | ⚠️ ${batchResult.rateLimitHits} rate limit retries`;
     }
-
-    // Apply LLM extraction if enabled
     if (use_llm) {
-      const llmProcessor = createLLMProcessor();
-      if (llmProcessor) {
-        const enhancedInstruction = enhanceExtractionInstruction(what_to_extract);
-        const tokensPerUrl = Math.floor(32000 / urls.length); // Similar budget as scrape_links
-        
-        console.error(`[Reddit Tool] Applying LLM extraction (${tokensPerUrl} tokens)...`);
-        
-        const llmResult = await processContentWithLLM(
-          md,
-          { use_llm: true, what_to_extract: enhancedInstruction, max_tokens: tokensPerUrl },
-          llmProcessor
-        );
-
-        if (llmResult.processed) {
-          console.error(`[Reddit Tool] LLM extraction complete`);
-          return `# Reddit Posts Analysis (LLM Processed)\n\n**Posts Analyzed:** ${urls.length} | **Comment Budget:** ${commentsPerPost}/post\n\n---\n\n${llmResult.content}`;
-        } else {
-          console.error(`[Reddit Tool] LLM extraction skipped: ${llmResult.error || 'unknown reason'}`);
-          md += `\n\n⚠️ _LLM extraction was requested but failed: ${llmResult.error || 'unknown'}. Returning raw content._`;
-        }
-      } else {
+      if (!llmProcessor) {
         md += `\n\n⚠️ _LLM extraction was requested but OPENROUTER_API_KEY is not set._`;
+      } else if (llmErrors > 0) {
+        md += ` | ⚠️ ${llmErrors} LLM extraction failures`;
       }
     }
 
