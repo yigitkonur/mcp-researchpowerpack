@@ -1,8 +1,7 @@
-# NPM Release Workflow v4 - Smart Auto-Bump
+# NPM Release Workflow v5 - Auto Version Bump + Publish
 name: NPM Release
 
 on:
-  # Auto-publish on push with smart version checking
   push:
     branches:
       - main
@@ -10,21 +9,22 @@ on:
       - '*.md'
       - '.gitignore'
       - 'LICENSE'
-  # Manual trigger with version bump option
+      - 'docs/**'
   workflow_dispatch:
     inputs:
       bump:
-        description: Version bump type (leave empty to publish current version)
+        description: Version bump type
         required: false
         type: choice
+        default: 'patch'
         options:
-          - ''
           - patch
           - minor
           - major
 
 permissions:
   contents: write
+  id-token: write  # Required for npm provenance
 
 jobs:
   publish:
@@ -34,6 +34,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0  # Full history for version checking
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -41,50 +42,68 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
-      - name: Install
+      - name: Install dependencies
         run: npm ci
 
       - name: Build
         run: npm run build
 
-      - name: Check if version already published
+      - name: Check current version on npm
         id: version_check
         run: |
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
-          echo "current_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
-          
+          echo "local_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+
           # Check if version exists on npm
           if npm view research-powerpack-mcp@$PACKAGE_VERSION version 2>/dev/null; then
-            echo "version_exists=true" >> $GITHUB_OUTPUT
-            echo "Version $PACKAGE_VERSION already exists on npm"
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "📦 Version $PACKAGE_VERSION already published on npm"
           else
-            echo "version_exists=false" >> $GITHUB_OUTPUT
-            echo "Version $PACKAGE_VERSION is new and will be published"
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "✨ Version $PACKAGE_VERSION is new"
           fi
 
-      - name: Auto Version Bump (if version exists)
-        if: steps.version_check.outputs.version_exists == 'true' && github.event_name == 'push'
+      - name: Bump version (auto patch on push, or manual selection)
+        id: bump
+        if: steps.version_check.outputs.exists == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          npm version patch -m "chore: auto bump version to %s [skip ci]"
-          git push
-          git push --tags
-          echo "Auto-bumped to $(node -p "require('./package.json').version")"
-          echo "version_bumped=true" >> $GITHUB_ENV
 
-      - name: Manual Version Bump
-        if: ${{ inputs.bump != '' }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          npm version ${{ inputs.bump }} -m "release: %s [skip ci]"
+          # Use manual input if provided, otherwise default to patch
+          BUMP_TYPE="${{ inputs.bump }}"
+          if [ -z "$BUMP_TYPE" ]; then
+            BUMP_TYPE="patch"
+          fi
+
+          echo "🔼 Bumping version: $BUMP_TYPE"
+          npm version $BUMP_TYPE -m "chore: bump version to %s [skip ci]"
+
+          NEW_VERSION=$(node -p "require('./package.json').version")
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "bumped=true" >> $GITHUB_OUTPUT
+
           git push
           git push --tags
-          echo "version_bumped=true" >> $GITHUB_ENV
+          echo "✅ Bumped to v$NEW_VERSION and pushed"
 
       - name: Publish to NPM
-        if: steps.version_check.outputs.version_exists == 'false' || env.version_bumped == 'true'
-        run: npm publish --access public
+        if: steps.version_check.outputs.exists == 'false' || steps.bump.outputs.bumped == 'true'
+        run: |
+          PUBLISH_VERSION=$(node -p "require('./package.json').version")
+          echo "📦 Publishing v$PUBLISH_VERSION to npm..."
+          npm publish --access public --provenance
+          echo "✅ Successfully published v$PUBLISH_VERSION"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        if: steps.bump.outputs.bumped == 'true'
+        run: |
+          VERSION="v${{ steps.bump.outputs.new_version }}"
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --notes "Released via automated workflow" \
+            --latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
