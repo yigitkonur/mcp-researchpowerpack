@@ -13,6 +13,7 @@ import { TOOLS } from './tools/definitions.js';
 import { executeTool, getToolCapabilities } from './tools/registry.js';
 import { classifyError, createToolErrorFromStructured } from './utils/errors.js';
 import { SERVER, getCapabilities } from './config/index.js';
+import { initLogger } from './utils/logger.js';
 
 // ============================================================================
 // Capability Detection (uses registry for tool capability mapping)
@@ -37,8 +38,10 @@ if (capabilities.scraping && !capabilities.llmExtraction) {
 
 const server = new Server(
   { name: SERVER.NAME, version: SERVER.VERSION },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {}, logging: {} } }
 );
+
+initLogger(server);
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 

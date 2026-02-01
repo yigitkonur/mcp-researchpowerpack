@@ -13,6 +13,7 @@ import {
   type StructuredError,
 } from '../utils/errors.js';
 import { pMapSettled } from '../utils/concurrency.js';
+import { mcpLog } from '../utils/logger.js';
 
 interface ScrapeRequest {
   url: string;
@@ -157,7 +158,7 @@ export class ScraperClient {
 
           if (attempt < maxRetries - 1) {
             const delayMs = this.calculateBackoff(attempt);
-            console.error(`[Scraper] ${response.status} on attempt ${attempt + 1}/${maxRetries}. Retrying in ${delayMs}ms`);
+            mcpLog('warning', `${response.status} on attempt ${attempt + 1}/${maxRetries}. Retrying in ${delayMs}ms`, 'scraper');
             await sleep(delayMs);
             continue;
           }
@@ -167,7 +168,7 @@ export class ScraperClient {
         lastError = classifyError({ status: response.status, message: content });
         if (attempt < maxRetries - 1 && lastError.retryable) {
           const delayMs = this.calculateBackoff(attempt);
-          console.error(`[Scraper] Status ${response.status}. Retrying in ${delayMs}ms`);
+          mcpLog('warning', `Status ${response.status}. Retrying in ${delayMs}ms`, 'scraper');
           await sleep(delayMs);
           continue;
         }
@@ -196,7 +197,7 @@ export class ScraperClient {
         // Retryable error - continue if attempts remaining
         if (attempt < maxRetries - 1) {
           const delayMs = this.calculateBackoff(attempt);
-          console.error(`[Scraper] ${lastError.code}: ${lastError.message}. Retry ${attempt + 1}/${maxRetries} in ${delayMs}ms`);
+          mcpLog('warning', `${lastError.code}: ${lastError.message}. Retry ${attempt + 1}/${maxRetries} in ${delayMs}ms`, 'scraper');
           await sleep(delayMs);
           continue;
         }
@@ -249,7 +250,7 @@ export class ScraperClient {
       // Success
       if (result.statusCode >= 200 && result.statusCode < 300 && !result.error) {
         if (attemptResults.length > 0) {
-          console.error(`[Scraper] Success with ${attempt.description} after ${attemptResults.length} fallback(s)`);
+          mcpLog('info', `Success with ${attempt.description} after ${attemptResults.length} fallback(s)`, 'scraper');
         }
         return result;
       }
@@ -261,7 +262,7 @@ export class ScraperClient {
 
       // Non-retryable errors - don't try other modes
       if (result.error && !result.error.retryable) {
-        console.error(`[Scraper] Non-retryable error with ${attempt.description}: ${result.error.message}`);
+        mcpLog('error', `Non-retryable error with ${attempt.description}: ${result.error.message}`, 'scraper');
         return result;
       }
 

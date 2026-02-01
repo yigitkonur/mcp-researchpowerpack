@@ -3,6 +3,44 @@
  * Extracted from individual handlers to eliminate duplication
  */
 
+// Re-export from centralized modules
+export {
+  mcpLog,
+  safeLog as safeLogSimple,
+  createToolLogger,
+  type LogLevel,
+  type ToolLogger as SimpleToolLogger,
+} from '../utils/logger.js';
+
+export {
+  formatSuccess,
+  formatError,
+  formatBatchHeader,
+  formatList,
+  formatDuration,
+  truncateText,
+  type SuccessOptions,
+  type ErrorOptions,
+  type BatchHeaderOptions,
+  type ListItem,
+} from '../utils/response.js';
+
+// ============================================================================
+// Token Budget Constants
+// ============================================================================
+
+/**
+ * Centralized token budgets for all tools
+ */
+export const TOKEN_BUDGETS = {
+  /** Deep research total budget */
+  RESEARCH: 32_000,
+  /** Web scraper total budget */
+  SCRAPER: 32_000,
+  /** Reddit comment budget per batch */
+  REDDIT_COMMENTS: 1_000,
+} as const;
+
 // ============================================================================
 // Types
 // ============================================================================

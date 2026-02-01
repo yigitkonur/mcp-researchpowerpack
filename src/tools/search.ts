@@ -14,11 +14,12 @@ import {
 } from '../utils/url-aggregator.js';
 import { CTR_WEIGHTS } from '../config/index.js';
 import { classifyError, MCP_ERROR_CODES, type McpErrorCodeType } from '../utils/errors.js';
-
-interface ToolOptions {
-  sessionId?: string;
-  logger?: (level: 'info' | 'error' | 'debug', message: string, sessionId: string) => Promise<void>;
-}
+import {
+  mcpLog,
+  formatSuccess,
+  formatError,
+  formatDuration,
+} from './utils.js';
 
 function getPositionScore(position: number): number {
   if (position >= 1 && position <= 10) {
@@ -28,16 +29,12 @@ function getPositionScore(position: number): number {
 }
 
 export async function handleWebSearch(
-  params: WebSearchParams,
-  options: ToolOptions = {}
+  params: WebSearchParams
 ): Promise<{ content: string; structuredContent: WebSearchOutput }> {
-  const { sessionId, logger } = options;
   const startTime = Date.now();
 
   try {
-    if (sessionId && logger) {
-      await logger('info', `Searching for ${params.keywords.length} keyword(s)`, sessionId);
-    }
+    mcpLog('info', `Searching for ${params.keywords.length} keyword(s)`, 'search');
 
     const client = new SearchClient();
     const response = await client.searchMultiple(params.keywords);
@@ -133,13 +130,19 @@ export async function handleWebSearch(
 
     const executionTime = Date.now() - startTime;
 
-    if (sessionId && logger) {
-      await logger(
-        'info',
-        `Search completed: ${totalResults} results, ${aggregation.totalUniqueUrls} unique URLs, ${consensusUrls.length} consensus URLs in ${executionTime}ms`,
-        sessionId
-      );
-    }
+    mcpLog('info', `Search completed: ${totalResults} results, ${aggregation.totalUniqueUrls} unique URLs, ${consensusUrls.length} consensus`, 'search');
+
+    // Add Next Steps section
+    const nextSteps = [
+      consensusUrls.length > 0 ? `Scrape top consensus URLs: scrape_links(urls=[${consensusUrls.slice(0, 3).map(u => `"${u.url}"`).join(', ')}], use_llm=true)` : null,
+      'Get Reddit perspective: search_reddit(queries=[...related terms...])',
+      'Deep research: deep_research(questions=[{question: "Based on search results..."}])',
+    ].filter(Boolean) as string[];
+
+    markdown += '\n\n---\n\n**Next Steps:**\n';
+    nextSteps.forEach(step => { markdown += `→ ${step}\n`; });
+
+    markdown += `\n---\n*${formatDuration(executionTime)} | ${aggregation.totalUniqueUrls} unique URLs | ${consensusUrls.length} consensus*`;
 
     const metadata = {
       total_keywords: response.totalKeywords,
@@ -152,19 +155,22 @@ export async function handleWebSearch(
 
     return { content: markdown, structuredContent: { content: markdown, metadata } };
   } catch (error) {
-    // Classify error for better reporting
     const structuredError = classifyError(error);
-    const errorCode = structuredError.code;
-
-    if (sessionId && logger) {
-      await logger('error', `web_search: ${structuredError.message}`, sessionId);
-    }
-
     const executionTime = Date.now() - startTime;
-    const retryHint = structuredError.retryable 
-      ? '\n\n💡 This error may be temporary. Try again in a moment.' 
-      : '';
-    const errorContent = `# ❌ web_search: Search Failed\n\n**${errorCode}:** ${structuredError.message}${retryHint}\n\n**Tip:** Make sure SERPER_API_KEY is set in your environment variables.`;
+
+    mcpLog('error', `web_search: ${structuredError.message}`, 'search');
+
+    const errorContent = formatError({
+      code: structuredError.code,
+      message: structuredError.message,
+      retryable: structuredError.retryable,
+      toolName: 'web_search',
+      howToFix: ['Verify SERPER_API_KEY is set correctly'],
+      alternatives: [
+        'search_reddit(queries=[...]) for Reddit-specific results',
+        'deep_research(questions=[...]) for AI-synthesized research',
+      ],
+    });
 
     return {
       content: errorContent,
@@ -174,7 +180,7 @@ export async function handleWebSearch(
           total_keywords: params.keywords.length,
           total_results: 0,
           execution_time_ms: executionTime,
-          errorCode, // Include error code for programmatic handling
+          errorCode: structuredError.code,
         },
       },
     };

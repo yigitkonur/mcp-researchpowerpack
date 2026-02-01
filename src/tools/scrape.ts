@@ -11,6 +11,16 @@ import { removeMetaTags } from '../utils/markdown-formatter.js';
 import { SCRAPER } from '../config/index.js';
 import { getToolConfig } from '../config/loader.js';
 import { classifyError } from '../utils/errors.js';
+import { pMap } from '../utils/concurrency.js';
+import {
+  mcpLog,
+  formatSuccess,
+  formatError,
+  formatBatchHeader,
+  formatDuration,
+  TOKEN_BUDGETS,
+  calculateTokenAllocation,
+} from './utils.js';
 
 // Module-level singleton - MarkdownCleaner is stateless
 const markdownCleaner = new MarkdownCleaner();
@@ -21,37 +31,9 @@ function getExtractionSuffix(): string {
   return config?.limits?.extraction_suffix as string || SCRAPER.EXTRACTION_SUFFIX;
 }
 
-interface ToolOptions {
-  sessionId?: string;
-  logger?: (level: 'info' | 'error' | 'debug', message: string, sessionId: string) => Promise<void>;
-}
-
-function calculateTokenAllocation(urlCount: number): number {
-  if (urlCount <= 0) return SCRAPER.MAX_TOKENS_BUDGET;
-  return Math.floor(SCRAPER.MAX_TOKENS_BUDGET / urlCount);
-}
-
 function enhanceExtractionInstruction(instruction: string | undefined): string {
   const base = instruction || 'Extract the main content and key information from this page.';
   return `${base}\n\n${getExtractionSuffix()}`;
-}
-
-/**
- * Safe logger wrapper - NEVER throws
- */
-async function safeLog(
-  logger: ToolOptions['logger'],
-  sessionId: string | undefined,
-  level: 'info' | 'error' | 'debug',
-  message: string
-): Promise<void> {
-  if (!logger || !sessionId) return;
-  try {
-    await logger(level, message, sessionId);
-  } catch {
-    // Silently ignore logger errors - they should never crash the tool
-    console.error(`[Scrape Tool] Logger failed: ${message}`);
-  }
 }
 
 /**
@@ -59,30 +41,34 @@ async function safeLog(
  * NEVER throws - always returns a valid response with content and metadata
  */
 export async function handleScrapeLinks(
-  params: ScrapeLinksParams,
-  options: ToolOptions = {}
+  params: ScrapeLinksParams
 ): Promise<{ content: string; structuredContent: ScrapeLinksOutput }> {
-  const { sessionId, logger } = options;
   const startTime = Date.now();
 
   // Helper to create error response
-  const createErrorResponse = (message: string, executionTime: number): { content: string; structuredContent: ScrapeLinksOutput } => ({
-    content: `# ❌ Scraping Failed\n\n${message}`,
+  const createErrorResponse = (code: string, message: string, retryable = false): { content: string; structuredContent: ScrapeLinksOutput } => ({
+    content: formatError({
+      code,
+      message,
+      retryable,
+      toolName: 'scrape_links',
+      howToFix: code === 'NO_URLS' ? ['Provide at least one valid URL'] : undefined,
+    }),
     structuredContent: {
-      content: `# ❌ Scraping Failed\n\n${message}`,
+      content: message,
       metadata: {
         total_urls: params.urls?.length || 0,
         successful: 0,
         failed: params.urls?.length || 0,
         total_credits: 0,
-        execution_time_ms: executionTime,
+        execution_time_ms: Date.now() - startTime,
       },
     },
   });
 
   // Validate params
   if (!params.urls || params.urls.length === 0) {
-    return createErrorResponse('No URLs provided', Date.now() - startTime);
+    return createErrorResponse('NO_URLS', 'No URLs provided');
   }
 
   // Filter out invalid URLs early
@@ -99,13 +85,13 @@ export async function handleScrapeLinks(
   }
 
   if (validUrls.length === 0) {
-    return createErrorResponse(`All ${params.urls.length} URLs are invalid`, Date.now() - startTime);
+    return createErrorResponse('INVALID_URLS', `All ${params.urls.length} URLs are invalid`);
   }
 
-  const tokensPerUrl = calculateTokenAllocation(validUrls.length);
+  const tokensPerUrl = calculateTokenAllocation(validUrls.length, TOKEN_BUDGETS.SCRAPER);
   const totalBatches = Math.ceil(validUrls.length / SCRAPER.BATCH_SIZE);
 
-  await safeLog(logger, sessionId, 'info', `Starting scrape: ${validUrls.length} URL(s), ${tokensPerUrl} tokens/URL, ${totalBatches} batch(es)`);
+  mcpLog('info', `Starting scrape: ${validUrls.length} URL(s), ${tokensPerUrl} tokens/URL, ${totalBatches} batch(es)`, 'scrape');
 
   // Initialize clients safely
   let client: ScraperClient;
@@ -113,7 +99,7 @@ export async function handleScrapeLinks(
     client = new ScraperClient();
   } catch (error) {
     const err = classifyError(error);
-    return createErrorResponse(`Failed to initialize scraper: ${err.message}`, Date.now() - startTime);
+    return createErrorResponse('CLIENT_INIT_FAILED', `Failed to initialize scraper: ${err.message}`);
   }
 
   const llmProcessor = createLLMProcessor(); // Returns null if not configured
@@ -125,7 +111,7 @@ export async function handleScrapeLinks(
   // Scrape URLs - scrapeMultiple NEVER throws
   const results = await client.scrapeMultiple(validUrls, { timeout: params.timeout });
 
-  await safeLog(logger, sessionId, 'info', `Scraping complete. Processing ${results.length} results...`);
+  mcpLog('info', `Scraping complete. Processing ${results.length} results...`, 'scrape');
 
   let successful = 0;
   let failed = 0;
@@ -139,7 +125,14 @@ export async function handleScrapeLinks(
     contents.push(`## ${invalidUrl}\n\n❌ Invalid URL format`);
   }
 
-  // Process each result
+  // Pass 1: Synchronous processing (markdown cleaning, error checking, credit counting)
+  interface ProcessedResult {
+    url: string;
+    content: string;
+    index: number;
+  }
+  const successItems: ProcessedResult[] = [];
+
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
     if (!result) {
@@ -148,15 +141,14 @@ export async function handleScrapeLinks(
       continue;
     }
 
-    await safeLog(logger, sessionId, 'info', `[${i + 1}/${results.length}] Processing ${result.url}`);
+    mcpLog('debug', `[${i + 1}/${results.length}] Processing ${result.url}`, 'scrape');
 
     // Check for errors in result
     if (result.error || result.statusCode < 200 || result.statusCode >= 300) {
       failed++;
       const errorMsg = result.error?.message || result.content || `HTTP ${result.statusCode}`;
       contents.push(`## ${result.url}\n\n❌ Failed to scrape: ${errorMsg}`);
-
-      await safeLog(logger, sessionId, 'error', `[${i + 1}/${results.length}] Failed: ${errorMsg}`);
+      mcpLog('warning', `[${i + 1}/${results.length}] Failed: ${errorMsg}`, 'scrape');
       continue;
     }
 
@@ -164,53 +156,91 @@ export async function handleScrapeLinks(
     successful++;
     totalCredits += result.credits;
 
-    // Process content safely
+    // Process content safely (CPU-bound, fast)
     let content: string;
     try {
       content = markdownCleaner.processContent(result.content);
     } catch {
-      // If markdown cleaning fails, use raw content
       content = result.content;
     }
 
-    // Apply LLM extraction if enabled - processContentWithLLM NEVER throws
-    if (params.use_llm && llmProcessor) {
-      await safeLog(logger, sessionId, 'info', `[${i + 1}/${results.length}] Applying LLM extraction (${tokensPerUrl} tokens)...`);
+    successItems.push({ url: result.url, content, index: i });
+  }
+
+  // Pass 2: Parallel LLM extraction for successful results (I/O-bound)
+  if (params.use_llm && llmProcessor && successItems.length > 0) {
+    mcpLog('info', `Starting parallel LLM extraction for ${successItems.length} pages (concurrency: 3)`, 'scrape');
+
+    const llmResults = await pMap(successItems, async (item) => {
+      mcpLog('debug', `LLM extracting ${item.url} (${tokensPerUrl} tokens)...`, 'scrape');
 
       const llmResult = await processContentWithLLM(
-        content,
+        item.content,
         { use_llm: params.use_llm, what_to_extract: enhancedInstruction, max_tokens: tokensPerUrl },
         llmProcessor
       );
 
       if (llmResult.processed) {
-        content = llmResult.content;
-        await safeLog(logger, sessionId, 'info', `[${i + 1}/${results.length}] LLM extraction complete`);
-      } else {
-        llmErrors++;
-        await safeLog(logger, sessionId, 'info', `[${i + 1}/${results.length}] LLM extraction skipped: ${llmResult.error || 'unknown reason'}`);
-        // Continue with original content - graceful degradation
+        mcpLog('debug', `LLM extraction complete for ${item.url}`, 'scrape');
+        return { ...item, content: llmResult.content };
       }
-    }
 
-    // Remove meta tags safely
+      llmErrors++;
+      mcpLog('warning', `LLM extraction skipped for ${item.url}: ${llmResult.error || 'unknown reason'}`, 'scrape');
+      return item; // Graceful degradation — use original cleaned content
+    }, 3);
+
+    // Update successItems with LLM-processed content
+    for (let i = 0; i < llmResults.length; i++) {
+      successItems[i] = llmResults[i];
+    }
+  }
+
+  // Pass 3: Final assembly — remove meta tags and build content entries
+  for (const item of successItems) {
+    let content = item.content;
     try {
       content = removeMetaTags(content);
     } catch {
       // If this fails, just use the content as-is
     }
-
-    contents.push(`## ${result.url}\n\n${content}`);
+    contents.push(`## ${item.url}\n\n${content}`);
   }
 
   const executionTime = Date.now() - startTime;
 
-  await safeLog(logger, sessionId, 'info', `Completed: ${successful} successful, ${failed} failed, ${totalCredits} credits used`);
+  mcpLog('info', `Completed: ${successful} successful, ${failed} failed, ${totalCredits} credits used`, 'scrape');
 
-  // Build response
-  const allocationHeader = `**Token Allocation:** ${tokensPerUrl.toLocaleString()} tokens/URL (${params.urls.length} URLs, ${SCRAPER.MAX_TOKENS_BUDGET.toLocaleString()} total budget)`;
-  const statusHeader = `**Status:** ✅ ${successful} successful | ❌ ${failed} failed | 📦 ${totalBatches} batch(es)${llmErrors > 0 ? ` | ⚠️ ${llmErrors} LLM extraction failures` : ''}`;
-  const formattedContent = `# Scraped Content (${params.urls.length} URLs)\n\n${allocationHeader}\n${statusHeader}\n\n---\n\n${contents.join('\n\n---\n\n')}`;
+  // Build 70/20/10 response
+  const batchHeader = formatBatchHeader({
+    title: `Scraped Content (${params.urls.length} URLs)`,
+    totalItems: params.urls.length,
+    successful,
+    failed,
+    tokensPerItem: tokensPerUrl,
+    batches: totalBatches,
+    extras: {
+      'Credits used': totalCredits,
+      ...(llmErrors > 0 ? { 'LLM extraction failures': llmErrors } : {}),
+    },
+  });
+
+  const nextSteps = [
+    successful > 0 ? `Extract specific data: scrape_links(urls=[...], use_llm=true, what_to_extract="Extract pricing | features | testimonials")` : null,
+    failed > 0 ? `Retry failed URLs with longer timeout: scrape_links(urls=[...], timeout=60)` : null,
+    'Research further: deep_research(questions=[{question: "Based on scraped content..."}])',
+  ].filter(Boolean) as string[];
+
+  const formattedContent = formatSuccess({
+    title: 'Scraping Complete',
+    summary: batchHeader,
+    data: contents.join('\n\n---\n\n'),
+    nextSteps,
+    metadata: {
+      'Execution time': formatDuration(executionTime),
+      'Token budget': TOKEN_BUDGETS.SCRAPER.toLocaleString(),
+    },
+  });
 
   const metadata = {
     total_urls: params.urls.length,
@@ -219,7 +249,7 @@ export async function handleScrapeLinks(
     total_credits: totalCredits,
     execution_time_ms: executionTime,
     tokens_per_url: tokensPerUrl,
-    total_token_budget: SCRAPER.MAX_TOKENS_BUDGET,
+    total_token_budget: TOKEN_BUDGETS.SCRAPER,
     batches_processed: totalBatches,
   };
 

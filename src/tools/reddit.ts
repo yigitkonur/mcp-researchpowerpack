@@ -10,6 +10,13 @@ import { REDDIT } from '../config/index.js';
 import { classifyError } from '../utils/errors.js';
 import { createLLMProcessor, processContentWithLLM } from '../services/llm-processor.js';
 import { getToolConfig } from '../config/loader.js';
+import {
+  mcpLog,
+  formatSuccess,
+  formatError,
+  formatBatchHeader,
+  TOKEN_BUDGETS,
+} from './utils.js';
 
 // ============================================================================
 // Formatters
@@ -69,7 +76,20 @@ export async function handleSearchReddit(
     }
 
     if (totalResults === 0) {
-      return `# 🔍 Reddit Search Results\n\n_No results found for any of the ${limited.length} queries._`;
+      return formatError({
+        code: 'NO_RESULTS',
+        message: `No results found for any of the ${limited.length} queries`,
+        toolName: 'search_reddit',
+        howToFix: [
+          'Try broader or simpler search terms',
+          'Check spelling of technical terms',
+          'Remove date filters if using them',
+        ],
+        alternatives: [
+          'web_search(keywords=[...]) for general web results',
+          'deep_research(questions=[...]) for synthesized analysis',
+        ],
+      });
     }
 
     // Aggregate and rank results by CTR
@@ -79,10 +99,14 @@ export async function handleSearchReddit(
     return generateRedditEnhancedOutput(aggregation, limited, results);
   } catch (error) {
     const structuredError = classifyError(error);
-    const retryHint = structuredError.retryable 
-      ? '\n\n💡 This error may be temporary. Try again in a moment.' 
-      : '';
-    return `# ❌ search_reddit: Search Failed\n\n**${structuredError.code}:** ${structuredError.message}${retryHint}\n\n**Tip:** Make sure SERPER_API_KEY is set in your environment variables.`;
+    return formatError({
+      code: structuredError.code,
+      message: structuredError.message,
+      retryable: structuredError.retryable,
+      toolName: 'search_reddit',
+      howToFix: ['Verify SERPER_API_KEY is set correctly'],
+      alternatives: ['web_search(keywords=[...]) as backup'],
+    });
   }
 }
 
@@ -131,10 +155,20 @@ export async function handleGetRedditPosts(
     const { fetchComments = true, maxCommentsOverride, use_llm = false, what_to_extract } = options;
 
     if (urls.length < REDDIT.MIN_POSTS) {
-      return `# ❌ get_reddit_post: Validation Error\n\nMinimum ${REDDIT.MIN_POSTS} Reddit posts required. Received: ${urls.length}`;
+      return formatError({
+        code: 'MIN_POSTS',
+        message: `Minimum ${REDDIT.MIN_POSTS} Reddit posts required. Received: ${urls.length}`,
+        toolName: 'get_reddit_post',
+        howToFix: [`Add at least ${REDDIT.MIN_POSTS - urls.length} more Reddit URL(s)`],
+      });
     }
     if (urls.length > REDDIT.MAX_POSTS) {
-      return `# ❌ get_reddit_post: Validation Error\n\nMaximum ${REDDIT.MAX_POSTS} Reddit posts allowed. Received: ${urls.length}. Please remove ${urls.length - REDDIT.MAX_POSTS} URL(s) and retry.`;
+      return formatError({
+        code: 'MAX_POSTS',
+        message: `Maximum ${REDDIT.MAX_POSTS} Reddit posts allowed. Received: ${urls.length}`,
+        toolName: 'get_reddit_post',
+        howToFix: [`Remove ${urls.length - REDDIT.MAX_POSTS} URL(s) and retry`],
+      });
     }
 
     const allocation = calculateCommentAllocation(urls.length);
@@ -145,23 +179,10 @@ export async function handleGetRedditPosts(
     const batchResult = await client.batchGetPosts(urls, commentsPerPost, fetchComments);
     const results = batchResult.results;
 
-    // Initialize LLM processor if needed (before the loop for per-URL processing)
+    // Initialize LLM processor if needed
     const llmProcessor = use_llm ? createLLMProcessor() : null;
-    const tokensPerUrl = use_llm ? Math.floor(32000 / urls.length) : 0;
+    const tokensPerUrl = use_llm ? Math.floor(TOKEN_BUDGETS.RESEARCH / urls.length) : 0;
     const enhancedInstruction = use_llm ? enhanceExtractionInstruction(what_to_extract) : undefined;
-
-    let md = `# Reddit Posts (${urls.length} posts)\n\n`;
-
-    if (fetchComments) {
-      md += `**Comment Allocation:** ${commentsPerPost} comments/post (${urls.length} posts, ${REDDIT.MAX_COMMENT_BUDGET} total budget)\n`;
-    } else {
-      md += `**Comments:** Not fetched (fetch_comments=false)\n`;
-    }
-    if (use_llm) {
-      md += `**Token Allocation:** ${tokensPerUrl.toLocaleString()} tokens/post (${urls.length} posts, 32,000 total budget)\n`;
-    }
-    md += `**Status:** 📦 ${totalBatches} batch(es) processed\n\n`;
-    md += `---\n\n`;
 
     let successful = 0;
     let failed = 0;
@@ -178,7 +199,7 @@ export async function handleGetRedditPosts(
 
         // Apply LLM extraction per-URL if enabled
         if (use_llm && llmProcessor) {
-          console.error(`[Reddit Tool] [${successful}/${urls.length}] Applying LLM extraction to ${url} (${tokensPerUrl} tokens)...`);
+          mcpLog('info', `[${successful}/${urls.length}] Applying LLM extraction to ${url}`, 'reddit');
 
           const llmResult = await processContentWithLLM(
             postContent,
@@ -188,11 +209,10 @@ export async function handleGetRedditPosts(
 
           if (llmResult.processed) {
             postContent = `## LLM Analysis: ${result.post.title}\n\n**r/${result.post.subreddit}** • u/${result.post.author} • ⬆️ ${result.post.score} • 💬 ${result.post.commentCount} comments\n🔗 ${result.post.url}\n\n${llmResult.content}`;
-            console.error(`[Reddit Tool] [${successful}/${urls.length}] LLM extraction complete`);
+            mcpLog('debug', `[${successful}/${urls.length}] LLM extraction complete`, 'reddit');
           } else {
             llmErrors++;
-            console.error(`[Reddit Tool] [${successful}/${urls.length}] LLM extraction failed: ${llmResult.error || 'unknown reason'}`);
-            // Continue with original content - graceful degradation
+            mcpLog('warning', `[${successful}/${urls.length}] LLM extraction failed: ${llmResult.error || 'unknown'}`, 'reddit');
           }
         }
 
@@ -200,26 +220,49 @@ export async function handleGetRedditPosts(
       }
     }
 
-    md += contents.join('\n\n---\n\n');
+    // Build 70/20/10 response
+    const batchHeader = formatBatchHeader({
+      title: `Reddit Posts`,
+      totalItems: urls.length,
+      successful,
+      failed,
+      ...(fetchComments ? { extras: { 'Comments/post': commentsPerPost } } : {}),
+      ...(use_llm ? { tokensPerItem: tokensPerUrl } : {}),
+      batches: totalBatches,
+    });
 
-    md += `\n\n---\n\n**Summary:** ✅ ${successful} successful | ❌ ${failed} failed`;
+    const statusExtras: string[] = [];
     if (batchResult.rateLimitHits > 0) {
-      md += ` | ⚠️ ${batchResult.rateLimitHits} rate limit retries`;
+      statusExtras.push(`⚠️ ${batchResult.rateLimitHits} rate limit retries`);
     }
-    if (use_llm) {
-      if (!llmProcessor) {
-        md += `\n\n⚠️ _LLM extraction was requested but OPENROUTER_API_KEY is not set._`;
-      } else if (llmErrors > 0) {
-        md += ` | ⚠️ ${llmErrors} LLM extraction failures`;
-      }
+    if (use_llm && !llmProcessor) {
+      statusExtras.push('⚠️ LLM unavailable (OPENROUTER_API_KEY not set)');
+    } else if (llmErrors > 0) {
+      statusExtras.push(`⚠️ ${llmErrors} LLM extraction failures`);
     }
 
-    return md.trim();
+    const nextSteps = [
+      successful > 0 ? 'Research further: deep_research(questions=[{question: "Based on Reddit discussion..."}])' : null,
+      failed > 0 ? 'Retry failed URLs individually' : null,
+      'Search related topics: search_reddit(queries=[...related terms...])',
+    ].filter(Boolean) as string[];
+
+    const extraStatus = statusExtras.length > 0 ? `\n${statusExtras.join(' | ')}` : '';
+
+    return formatSuccess({
+      title: `Reddit Posts Fetched (${successful}/${urls.length})`,
+      summary: batchHeader + extraStatus,
+      data: contents.join('\n\n---\n\n'),
+      nextSteps,
+    });
   } catch (error) {
     const structuredError = classifyError(error);
-    const retryHint = structuredError.retryable 
-      ? '\n\n💡 This error may be temporary. Try again in a moment.' 
-      : '';
-    return `# ❌ get_reddit_post: Operation Failed\n\n**${structuredError.code}:** ${structuredError.message}${retryHint}\n\n**Tip:** Make sure REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET are set in your environment variables.`;
+    return formatError({
+      code: structuredError.code,
+      message: structuredError.message,
+      retryable: structuredError.retryable,
+      toolName: 'get_reddit_post',
+      howToFix: ['Verify REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET are set'],
+    });
   }
 }

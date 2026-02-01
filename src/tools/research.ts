@@ -9,16 +9,20 @@ import { FileAttachmentService } from '../services/file-attachment.js';
 import { RESEARCH } from '../config/index.js';
 import { classifyError } from '../utils/errors.js';
 import { pMap } from '../utils/concurrency.js';
+import {
+  mcpLog,
+  formatSuccess,
+  formatError,
+  formatBatchHeader,
+  formatDuration,
+  truncateText,
+  TOKEN_BUDGETS,
+  calculateTokenAllocation,
+} from './utils.js';
 
 // Constants
-const TOTAL_TOKEN_BUDGET = 32000;
 const MIN_QUESTIONS = 1; // Allow single question for flexibility
 const MAX_QUESTIONS = 10;
-
-interface ResearchOptions {
-  sessionId?: string;
-  logger?: (level: 'info' | 'error' | 'debug', message: string, sessionId: string) => Promise<void>;
-}
 
 interface QuestionResult {
   question: string;
@@ -26,28 +30,6 @@ interface QuestionResult {
   success: boolean;
   error?: string;
   tokensUsed?: number;
-}
-
-function calculateTokenAllocation(questionCount: number): number {
-  if (questionCount <= 0) return TOTAL_TOKEN_BUDGET;
-  return Math.floor(TOTAL_TOKEN_BUDGET / questionCount);
-}
-
-/**
- * Safe logger wrapper - NEVER throws
- */
-async function safeLog(
-  logger: ResearchOptions['logger'],
-  sessionId: string | undefined,
-  level: 'info' | 'error' | 'debug',
-  message: string
-): Promise<void> {
-  if (!logger || !sessionId) return;
-  try {
-    await logger(level, message, sessionId);
-  } catch {
-    console.error(`[Research Tool] Logger failed: ${message}`);
-  }
 }
 
 const SYSTEM_PROMPT = `You are an expert research consultant. Provide evidence-based, multi-perspective analysis.
@@ -72,29 +54,38 @@ Be dense with insights, light on filler. Use examples and citations.`;
  * NEVER throws - always returns a valid response
  */
 export async function handleDeepResearch(
-  params: DeepResearchParams,
-  options: ResearchOptions = {}
+  params: DeepResearchParams
 ): Promise<{ content: string; structuredContent: object }> {
-  const { sessionId, logger } = options;
+  const startTime = Date.now();
   const questions = params.questions || [];
 
   // Validation
   if (questions.length < MIN_QUESTIONS) {
     return {
-      content: `# ❌ Error\n\nMinimum ${MIN_QUESTIONS} research question(s) required. Received: ${questions.length}`,
+      content: formatError({
+        code: 'MIN_QUESTIONS',
+        message: `Minimum ${MIN_QUESTIONS} research question(s) required. Received: ${questions.length}`,
+        toolName: 'deep_research',
+        howToFix: ['Add at least one question with detailed context'],
+      }),
       structuredContent: { error: true, message: `Minimum ${MIN_QUESTIONS} question(s) required` },
     };
   }
   if (questions.length > MAX_QUESTIONS) {
     return {
-      content: `# ❌ Error\n\nMaximum ${MAX_QUESTIONS} research questions allowed. Received: ${questions.length}`,
+      content: formatError({
+        code: 'MAX_QUESTIONS',
+        message: `Maximum ${MAX_QUESTIONS} research questions allowed. Received: ${questions.length}`,
+        toolName: 'deep_research',
+        howToFix: [`Remove ${questions.length - MAX_QUESTIONS} question(s)`],
+      }),
       structuredContent: { error: true, message: `Maximum ${MAX_QUESTIONS} questions allowed` },
     };
   }
 
-  const tokensPerQuestion = calculateTokenAllocation(questions.length);
+  const tokensPerQuestion = calculateTokenAllocation(questions.length, TOKEN_BUDGETS.RESEARCH);
 
-  await safeLog(logger, sessionId, 'info', `Starting batch research: ${questions.length} questions, ${tokensPerQuestion.toLocaleString()} tokens/question`);
+  mcpLog('info', `Starting batch research: ${questions.length} questions, ${tokensPerQuestion.toLocaleString()} tokens/question`, 'research');
 
   // Initialize client safely
   let client: ResearchClient;
@@ -103,7 +94,12 @@ export async function handleDeepResearch(
   } catch (error) {
     const err = classifyError(error);
     return {
-      content: `# ❌ Error\n\nFailed to initialize research client: ${err.message}`,
+      content: formatError({
+        code: 'CLIENT_INIT_FAILED',
+        message: `Failed to initialize research client: ${err.message}`,
+        toolName: 'deep_research',
+        howToFix: ['Check OPENROUTER_API_KEY is set'],
+      }),
       structuredContent: { error: true, message: `Failed to initialize: ${err.message}` },
     };
   }
@@ -112,8 +108,6 @@ export async function handleDeepResearch(
   const results: QuestionResult[] = [];
 
   // Process questions with bounded concurrency (max 3 concurrent LLM calls)
-  // Each research call involves web search + LLM processing, so unbounded parallelism
-  // causes CPU spikes and potential rate limiting on the LLM provider.
   const allResults = await pMap(questions, async (q, index): Promise<QuestionResult> => {
     try {
       // Enhance question with file attachments if present
@@ -124,11 +118,11 @@ export async function handleDeepResearch(
           enhancedQuestion = q.question + attachmentsMarkdown;
         } catch {
           // If attachment processing fails, continue with original question
-          console.error(`[Research] Failed to process attachments for question ${index + 1}`);
+          mcpLog('warning', `Failed to process attachments for question ${index + 1}`, 'research');
         }
       }
 
-      // ResearchClient.research() now returns error in response instead of throwing
+      // ResearchClient.research() returns error in response instead of throwing
       const response = await client.research({
         question: enhancedQuestion,
         systemPrompt: SYSTEM_PROMPT,
@@ -155,7 +149,7 @@ export async function handleDeepResearch(
         error: response.content ? undefined : 'Empty response received',
       };
     } catch (error) {
-      // This catch is a safety net - ResearchClient should not throw
+      // Safety net - ResearchClient should not throw
       const structuredError = classifyError(error);
       return {
         question: q.question,
@@ -172,32 +166,59 @@ export async function handleDeepResearch(
   const successful = results.filter(r => r.success);
   const failed = results.filter(r => !r.success);
   const totalTokens = successful.reduce((sum, r) => sum + (r.tokensUsed || 0), 0);
+  const executionTime = Date.now() - startTime;
 
-  let markdown = `# Deep Research Results (${questions.length} questions)\n\n`;
-  markdown += `**Token Allocation:** ${tokensPerQuestion.toLocaleString()} tokens/question (${questions.length} questions, ${TOTAL_TOKEN_BUDGET.toLocaleString()} total budget)\n`;
-  markdown += `**Status:** ✅ ${successful.length} successful | ❌ ${failed.length} failed | 📊 ${totalTokens.toLocaleString()} tokens used\n\n`;
-  markdown += `---\n\n`;
+  // Build 70/20/10 response
+  const batchHeader = formatBatchHeader({
+    title: `Deep Research Results`,
+    totalItems: questions.length,
+    successful: successful.length,
+    failed: failed.length,
+    tokensPerItem: tokensPerQuestion,
+    extras: {
+      'Total tokens used': totalTokens.toLocaleString(),
+    },
+  });
 
+  // Build questions data section
+  const questionsData: string[] = [];
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
-    markdown += `## Question ${i + 1}: ${r.question.substring(0, 100)}${r.question.length > 100 ? '...' : ''}\n\n`;
+    const preview = truncateText(r.question, 100);
+    questionsData.push(`## Question ${i + 1}: ${preview}\n`);
 
     if (r.success) {
-      markdown += r.content + '\n\n';
+      questionsData.push(r.content);
       if (r.tokensUsed) {
-        markdown += `_Tokens used: ${r.tokensUsed.toLocaleString()}_\n\n`;
+        questionsData.push(`\n*Tokens used: ${r.tokensUsed.toLocaleString()}*`);
       }
     } else {
-      markdown += `**❌ Error:** ${r.error}\n\n`;
+      questionsData.push(`**❌ Error:** ${r.error}`);
     }
-
-    markdown += `---\n\n`;
+    questionsData.push('\n---\n');
   }
 
-  await safeLog(logger, sessionId, 'info', `Research completed: ${successful.length}/${questions.length} successful, ${totalTokens.toLocaleString()} tokens`);
+  const nextSteps = [
+    successful.length > 0 ? 'Scrape mentioned sources: scrape_links(urls=[...extracted URLs...], use_llm=true)' : null,
+    failed.length > 0 ? 'Retry failed questions with more specific context' : null,
+    'Search Reddit for community perspective: search_reddit(queries=[...related topics...])',
+  ].filter(Boolean) as string[];
+
+  const formattedContent = formatSuccess({
+    title: `Research Complete (${successful.length}/${questions.length})`,
+    summary: batchHeader,
+    data: questionsData.join('\n'),
+    nextSteps,
+    metadata: {
+      'Execution time': formatDuration(executionTime),
+      'Token budget': TOKEN_BUDGETS.RESEARCH.toLocaleString(),
+    },
+  });
+
+  mcpLog('info', `Research completed: ${successful.length}/${questions.length} successful, ${totalTokens.toLocaleString()} tokens`, 'research');
 
   return {
-    content: markdown.trim(),
+    content: formattedContent,
     structuredContent: {
       totalQuestions: questions.length,
       successful: successful.length,

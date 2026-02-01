@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-02-01
+
+### Added - Agent-Optimized Response Formatting (70/20/10 Pattern)
+
+- **Standardized Response Format** - All tools now use the 70/20/10 pattern
+  - 70% Summary: Key insights, status indicators, metrics
+  - 20% Data: Structured results with clear formatting
+  - 10% Next Steps: Actionable follow-up commands ready to copy
+  - Consistent markdown output across all 5 tools
+
+- **Centralized Utilities**
+  - `src/utils/logger.ts` - MCP-compatible logging (uses stderr, never crashes)
+    - `mcpLog(level, message, tool)` - Structured logging with emoji prefixes
+    - `safeLog()` - Error-swallowing wrapper
+    - `createToolLogger()` - Bound logger factory
+  - `src/utils/response.ts` - 70/20/10 response formatters
+    - `formatSuccess({title, summary, data?, nextSteps?, metadata?})` - Main success response
+    - `formatError({code, message, retryable?, howToFix?, alternatives?, toolName?})` - Error with recovery guidance
+    - `formatBatchHeader({title, totalItems, successful, failed, ...})` - Batch operation status
+    - `formatList()`, `formatDuration()`, `truncateText()` helpers
+  - `TOKEN_BUDGETS` constant in `src/tools/utils.ts` for consistent token allocation
+
+- **Improved Error Responses**
+  - Structured error format with `code`, `message`, `howToFix`, `alternatives`
+  - Retryable errors clearly marked with hints
+  - Tool-specific recovery suggestions
+  - Alternative tool recommendations on failure
+
+### Changed
+
+- **Response Format** - All tools now return agent-optimized markdown instead of raw JSON
+  - `scrape_links` - Added execution time, credits used, next steps with actionable commands
+  - `deep_research` - Added question previews, token usage, follow-up suggestions
+  - `get_reddit_post` - Standardized batch header, LLM status tracking, recovery hints
+  - `search_reddit` - Consistent error formatting with alternatives
+  - `web_search` - Added consensus URL counts, next step commands with example URLs
+
+- **Removed Legacy Patterns**
+  - Removed per-tool `safeLog()` duplicates (now centralized)
+  - Removed per-tool `calculateTokenAllocation()` duplicates (now in utils.ts)
+  - Removed `ToolOptions` type with logger/sessionId (simplified signatures)
+
+### Migration Notes
+
+- Tool handlers no longer accept `options` parameter with `logger`/`sessionId`
+- All logging now uses `mcpLog()` from `src/utils/logger.ts`
+- Response format changed from mixed to standardized markdown
+- Old imports still work via re-exports in `src/tools/utils.ts`
+
 ## [3.5.1] - 2026-01-31
 
 ### Performance
