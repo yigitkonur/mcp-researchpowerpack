@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "research": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["dist/index.js"],
+      "env": {
+        "OPENROUTER_API_KEY": "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",
+        "REDDIT_CLIENT_ID": "yuq_M0kWusHp2olglFBnpw",
+        "REDDIT_CLIENT_SECRET": "mgEDGQckoGQd7c3NQ3MutBJ2S54u0g",
+        "RESEARCH_MODEL": "x-ai/grok-4.1-fast",
+        "SCRAPEDO_API_KEY": "d4874c0918ad49b782ce649c642364a5561da9e8387",
+        "SERPER_API_KEY": "a3c7a6122cb26d80c6a975e41b2a1047eb746b59"
+      }
+    }
+  }
+}
