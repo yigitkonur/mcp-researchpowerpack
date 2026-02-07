@@ -1,5 +1,5 @@
 <h1 align="center">🔬 Research Powerpack MCP 🔬</h1>
-<h3 align="center">Stop tab-hopping for research. Start getting god-tier context.</h3>
+<h3 align="center">Stop tab-hopping for research. Start getting structured context.</h3>
 
 <p align="center">
   <strong>
@@ -9,7 +9,7 @@
 
 <p align="center">
   <!-- Package Info -->
-  <a href="https://www.npmjs.com/package/research-powerpack-mcp"><img alt="npm" src="https://img.shields.io/npm/v/research-powerpack-mcp.svg?style=flat-square&color=4D87E6"></a>
+  <a href="https://www.npmjs.com/package/mcp-researchpowerpack"><img alt="npm" src="https://img.shields.io/npm/v/mcp-researchpowerpack.svg?style=flat-square&color=4D87E6"></a>
   <a href="#"><img alt="node" src="https://img.shields.io/badge/node-18+-4D87E6.svg?style=flat-square"></a>
   &nbsp;&nbsp;•&nbsp;&nbsp;
   <!-- Features -->
@@ -27,16 +27,16 @@
 ### 🧭 Quick Navigation
 
 [**⚡ Get Started**](#-get-started-in-60-seconds) •
-[**✨ Key Features**](#-feature-breakdown-the-secret-sauce) •
-[**🎮 Usage & Examples**](#-tool-reference) •
-[**⚙️ API Key Setup**](#-api-key-setup-guides) •
-[**🆚 Why This Slaps**](#-why-this-slaps-other-methods)
+[**🎯 Why Research Powerpack**](#-why-research-powerpack) •
+[**🎮 Tools**](#-tool-reference) •
+[**⚙️ Configuration**](#%EF%B8%8F-environment-variables--tool-availability) •
+[**📚 Examples**](#-recommended-workflows)
 
 </div>
 
 ---
 
-**`research-powerpack-mcp`** is the research assistant your AI wishes it had. Stop asking your LLM to guess about things it doesn't know. This MCP server acts like a senior researcher, searching the web, mining Reddit discussions, scraping documentation, and synthesizing everything into perfectly structured context so your AI can actually give you answers worth a damn.
+**`research-powerpack-mcp`** is the research assistant your AI has been missing. Stop asking your LLM to guess about things it doesn't know. This MCP server acts like a senior researcher -- searching the web, mining Reddit discussions, scraping documentation, and synthesizing everything into structured context so your AI can give you answers you can actually trust.
 
 <div align="center">
 <table>
@@ -65,29 +65,29 @@
 </table>
 </div>
 
-How it slaps:
+Here's how it works:
 - **You:** "What's the best database for my use case?"
 - **AI + Powerpack:** Searches Google, mines Reddit threads, scrapes docs, synthesizes findings.
 - **You:** Get an actually informed answer with real community opinions and citations.
-- **Result:** Ship better decisions. Skip the 47 browser tabs.
+- **Result:** Better decisions, faster. No more juggling 47 browser tabs.
 
 ---
 
-## 💥 Why This Slaps Other Methods
+## 🎯 Why Research Powerpack
 
-Manually researching is a vibe-killer. `research-powerpack-mcp` makes other methods look ancient.
+Manual research is tedious and error-prone. `research-powerpack-mcp` replaces that entire workflow with a single integrated pipeline.
 
 <table align="center">
 <tr>
-<td align="center"><b>❌ The Old Way (Pain)</b></td>
-<td align="center"><b>✅ The Powerpack Way (Glory)</b></td>
+<td align="center"><b>❌ Without Research Powerpack</b></td>
+<td align="center"><b>✅ With Research Powerpack</b></td>
 </tr>
 <tr>
 <td>
 <ol>
   <li>Open 15 browser tabs.</li>
   <li>Skim Stack Overflow answers from 2019.</li>
-  <li>Search Reddit, get distracted by drama.</li>
+  <li>Search Reddit, get distracted along the way.</li>
   <li>Copy-paste random snippets to your AI.</li>
   <li>Get a mediocre answer from confused context.</li>
 </ol>
@@ -98,13 +98,13 @@ Manually researching is a vibe-killer. `research-powerpack-mcp` makes other meth
   <li>AI searches, scrapes, mines Reddit automatically.</li>
   <li>Receive synthesized insights with sources.</li>
   <li>Make an informed decision.</li>
-  <li>Go grab a coffee. ☕</li>
+  <li>Move on to the work that matters. ☕</li>
 </ol>
 </td>
 </tr>
 </table>
 
-We're not just fetching random pages. We're building **high-signal, low-noise context** with CTR-weighted ranking, smart comment allocation, and intelligent token distribution that prevents massive responses from breaking your LLM's context window.
+This isn't just fetching random pages. Research Powerpack builds **high-signal, low-noise context** with CTR-weighted ranking, smart comment allocation, and intelligent token distribution that prevents massive responses from breaking your LLM's context window.
 
 ---
 
@@ -138,7 +138,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "research-powerpack": {
       "command": "npx",
-      "args": ["research-powerpack-mcp"],
+      "args": ["mcp-researchpowerpack"],
       "env": {
         "SERPER_API_KEY": "your_key",
         "REDDIT_CLIENT_ID": "your_id",
@@ -151,7 +151,7 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-or quick install (for MacOS):
+or quick install (for macOS):
 
 ```
 cat ~/Library/Application\ Support/Claude/claude_desktop_config.json | jq '.mcpServers["research-powerpack"] = {
@@ -171,7 +171,7 @@ cat ~/Library/Application\ Support/Claude/claude_desktop_config.json | jq '.mcpS
 
 #### Claude Code (CLI)
 
-One command to rule them all:
+One command to set everything up:
 
 ```bash
 claude mcp add research-powerpack npx \
@@ -192,7 +192,7 @@ Or manually add to `~/.claude.json`:
   "mcpServers": {
     "research-powerpack": {
       "command": "npx",
-      "args": ["research-powerpack-mcp"],
+      "args": ["mcp-researchpowerpack"],
       "env": {
         "SERPER_API_KEY": "your_key",
         "REDDIT_CLIENT_ID": "your_id",
@@ -215,7 +215,7 @@ Add to `.cursor/mcp.json` or equivalent:
   "mcpServers": {
     "research-powerpack": {
       "command": "npx",
-      "args": ["research-powerpack-mcp"],
+      "args": ["mcp-researchpowerpack"],
       "env": {
         "SERPER_API_KEY": "your_key"
       }
@@ -224,25 +224,7 @@ Add to `.cursor/mcp.json` or equivalent:
 }
 ```
 
-> **✨ Zero Crash Promise:** Missing API keys? No problem. The server always starts. Tools just return helpful setup instructions instead of exploding.
-
----
-
-## ✨ Feature Breakdown: The Secret Sauce
-
-<div align="center">
-
-| Feature | What It Does | Why You Care |
-| :---: | :--- | :--- |
-| **🔍 Batch Search**<br/>`100 keywords parallel` | Search Google for up to 100 queries simultaneously | Cover every angle of a topic in one shot |
-| **📊 CTR Ranking**<br/>`Smart URL scoring` | Identifies URLs that appear across multiple searches | Surfaces high-consensus authoritative sources |
-| **💬 Reddit Mining**<br/>`Real human opinions` | Google-powered Reddit search + native API fetching | Get actual user experiences, not marketing fluff |
-| **🎯 Smart Allocation**<br/>`Token-aware budgets` | 1,000 comment budget distributed across posts | Deep dive on 2 posts or quick scan on 50 |
-| **🌐 Universal Scraping**<br/>`Works on everything` | Auto-fallback: basic → JS render → geo-targeting | Handles SPAs, paywalls, and geo-restricted content |
-| **🧠 Deep Research**<br/>`AI-powered synthesis` | Batch research with web search and citations | Get comprehensive answers to complex questions |
-| **🧩 Modular Design**<br/>`Use what you need` | Each tool works independently | Pay only for the APIs you actually use |
-
-</div>
+> **Zero Crash Promise:** Missing API keys? No problem. The server always starts. Tools that require missing keys return helpful setup instructions instead of crashing.
 
 ---
 
@@ -435,18 +417,36 @@ SCRAPEDO_API_KEY=xxx
 OPENROUTER_API_KEY=xxx
 ```
 
----
+### Full Power Mode
 
-## 🔑 API Key Setup Guides
+For the best research experience, configure all four API keys:
+
+```bash
+SERPER_API_KEY=your_serper_key       # Free: 2,500 queries/month
+REDDIT_CLIENT_ID=your_reddit_id       # Free: Unlimited
+REDDIT_CLIENT_SECRET=your_reddit_secret
+SCRAPEDO_API_KEY=your_scrapedo_key   # Free: 1,000 credits/month
+OPENROUTER_API_KEY=your_openrouter_key # Pay-as-you-go
+```
+
+This unlocks:
+- **5 research tools** working together
+- **AI-powered content extraction** in scrape_links
+- **Deep research with web search** and citations
+- **Complete Reddit mining** (search → fetch → analyze)
+
+**Total setup time:** ~10 minutes. **Total free tier value:** ~$50/month equivalent.
+
+### 🔑 API Key Setup Guides
 
 <details>
 <summary><b>🔍 Serper API (Google Search) — FREE: 2,500 queries/month</b></summary>
 
-### What you get
+#### What you get
 - Fast Google search results via API
 - Enables `web_search` and `search_reddit` tools
 
-### Setup Steps
+#### Setup Steps
 1. Go to [serper.dev](https://serper.dev)
 2. Click **"Get API Key"** (top right)
 3. Sign up with email or Google
@@ -456,7 +456,7 @@ OPENROUTER_API_KEY=xxx
    SERPER_API_KEY=your_key_here
    ```
 
-### Pricing
+#### Pricing
 - **Free**: 2,500 queries/month
 - **Paid**: $50/month for 50,000 queries
 
@@ -465,12 +465,12 @@ OPENROUTER_API_KEY=xxx
 <details>
 <summary><b>🤖 Reddit OAuth — FREE: Unlimited access</b></summary>
 
-### What you get
+#### What you get
 - Full Reddit API access
 - Fetch posts and comments with upvote sorting
 - Enables `get_reddit_post` tool
 
-### Setup Steps
+#### Setup Steps
 1. Go to [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps)
 2. Scroll down and click **"create another app..."**
 3. Fill in:
@@ -492,12 +492,12 @@ OPENROUTER_API_KEY=xxx
 <details>
 <summary><b>🌐 Scrape.do (Web Scraping) — FREE: 1,000 credits/month</b></summary>
 
-### What you get
+#### What you get
 - JavaScript rendering support
 - Geo-targeting and CAPTCHA handling
 - Enables `scrape_links` tool
 
-### Setup Steps
+#### Setup Steps
 1. Go to [scrape.do](https://scrape.do)
 2. Click **"Start Free"**
 3. Sign up with email
@@ -507,7 +507,7 @@ OPENROUTER_API_KEY=xxx
    SCRAPEDO_API_KEY=your_key_here
    ```
 
-### Credit Usage
+#### Credit Usage
 - **Basic scrape**: 1 credit
 - **JavaScript rendering**: 5 credits
 - **Geo-targeting**: +25 credits
@@ -517,12 +517,12 @@ OPENROUTER_API_KEY=xxx
 <details>
 <summary><b>🧠 OpenRouter (AI Models) — Pay-as-you-go</b></summary>
 
-### What you get
+#### What you get
 - Access to 100+ AI models via one API
 - Enables `deep_research` tool
 - Enables AI extraction in `scrape_links`
 
-### Setup Steps
+#### Setup Steps
 1. Go to [openrouter.ai](https://openrouter.ai)
 2. Sign up with Google/GitHub/email
 3. Go to [openrouter.ai/keys](https://openrouter.ai/keys)
@@ -533,7 +533,7 @@ OPENROUTER_API_KEY=xxx
    OPENROUTER_API_KEY=sk-or-v1-xxxxx
    ```
 
-### Recommended Models for Deep Research
+#### Recommended Models for Deep Research
 ```bash
 # Default (optimized for research)
 RESEARCH_MODEL=perplexity/sonar-deep-research
@@ -548,7 +548,7 @@ RESEARCH_MODEL=anthropic/claude-3.5-sonnet
 RESEARCH_MODEL=openai/gpt-4o-mini
 ```
 
-### Recommended Models for AI Extraction (`use_llm` in `scrape_links`)
+#### Recommended Models for AI Extraction (`use_llm` in `scrape_links`)
 ```bash
 # Default (fast and cost-effective for extraction)
 LLM_EXTRACTION_MODEL=openrouter/gpt-oss-120b:nitro
@@ -566,7 +566,7 @@ LLM_EXTRACTION_MODEL=openai/gpt-4o-mini
 
 ---
 
-## 🔥 Recommended Workflows
+## 📚 Recommended Workflows
 
 ### Research a Technology Decision
 
@@ -598,113 +598,20 @@ LLM_EXTRACTION_MODEL=openai/gpt-4o-mini
 
 ---
 
-## 🔥 Enable Full Power Mode
-
-For the best research experience, configure all four API keys:
-
-```bash
-SERPER_API_KEY=your_serper_key       # Free: 2,500 queries/month
-REDDIT_CLIENT_ID=your_reddit_id       # Free: Unlimited
-REDDIT_CLIENT_SECRET=your_reddit_secret
-SCRAPEDO_API_KEY=your_scrapedo_key   # Free: 1,000 credits/month
-OPENROUTER_API_KEY=your_openrouter_key # Pay-as-you-go
-```
-
-This unlocks:
-- **5 research tools** working together
-- **AI-powered content extraction** in scrape_links
-- **Deep research with web search** and citations
-- **Complete Reddit mining** (search → fetch → analyze)
-
-**Total setup time:** ~10 minutes. **Total free tier value:** ~$50/month equivalent.
-
----
-
 ## 🛠️ Development
 
 ```bash
-# Clone
-git clone https://github.com/yigitkonur/research-powerpack-mcp.git
-cd research-powerpack-mcp
-
-# Install
+git clone https://github.com/yigitkonur/mcp-researchpowerpack.git
+cd mcp-researchpowerpack
 npm install
-
-# Development
 npm run dev
-
-# Build
 npm run build
-
-# Type check
 npm run typecheck
 ```
 
 ---
 
-## 🏗️ Architecture (v3.4.0+)
-
-The codebase uses a **YAML-driven configuration system** with **aggressive LLM optimization** (v3.5.0+):
-
-### Core Architecture
-
-| Component | File | Purpose |
-|-----------|------|---------|
-| **Tool Definitions** | `src/config/yaml/tools.yaml` | Single source of truth for all tool metadata |
-| **Handler Registry** | `src/tools/registry.ts` | Declarative tool registration + `executeTool` wrapper |
-| **YAML Loader** | `src/config/loader.ts` | Parses YAML, generates MCP-compatible definitions (cached) |
-| **Concurrency Utils** | `src/utils/concurrency.ts` | Bounded parallel execution (`pMap`/`pMapSettled`) |
-| **Shared Utils** | `src/tools/utils.ts` | Common utility functions |
-
-**Adding a new tool:**
-1. Add tool definition to `tools.yaml`
-2. Create handler in `src/tools/`
-3. Register in `src/tools/registry.ts`
-
-See `docs/refactoring/04-migration-guide.md` for detailed instructions.
-
-### Performance & Stability (v3.5.1+)
-
-All parallel operations use **bounded concurrency** to prevent CPU spikes and API rate limits:
-
-| Operation | Before | After |
-|-----------|--------|-------|
-| Reddit search queries | 50 concurrent | 8 concurrent |
-| Web scraping batches | 30 concurrent | 10 concurrent |
-| Deep research questions | Unbounded | 3 concurrent |
-| Reddit post fetching | 10 concurrent | 5 concurrent |
-| File attachments | Unbounded | 5 concurrent |
-
-Additional optimizations:
-- YAML config cached in memory (no repeated disk reads)
-- Async file I/O (no event loop blocking)
-- Pre-compiled regex patterns for hot paths
-- Reddit auth token deduplication (prevents concurrent token requests)
-
-### LLM Optimization (v3.5.0+)
-
-All tools include **aggressive guidance** to force LLMs to use them optimally:
-
-| Feature | Description |
-|---------|-------------|
-| **Configurable Limits** | All min/max values in YAML (`limits` section) |
-| **BAD vs GOOD Examples** | Every tool shows anti-patterns and perfect usage |
-| **Aggressive Phrasing** | Changed from "you can" to "you MUST" |
-| **Visual Formatting** | Emoji headers, section dividers, icons for visual scanning |
-| **Templates** | Structured formats for questions, extractions, file descriptions |
-
-**Key Enhancements:**
-- `search_reddit`: Minimum 10 queries (was 3), 10-category formula
-- `deep_research`: 7-section question template, file attachment requirements
-- `scrape_links`: Extraction template with OR statements, use_llm=true push
-- `web_search`: Minimum 3 keywords, search operator examples
-- `file_attachments`: Numbered 5-section description template
-
-See `docs/refactoring/07-llm-optimization-summary.md` for full details.
-
----
-
-## 🔥 Common Issues & Quick Fixes
+## 🔧 Troubleshooting
 
 <details>
 <summary><b>Expand for troubleshooting tips</b></summary>
@@ -713,7 +620,7 @@ See `docs/refactoring/07-llm-optimization-summary.md` for full details.
 | :--- | :--- |
 | **Tool returns "API key not configured"** | Add the required ENV variable to your MCP config. The error message tells you exactly which key is missing. |
 | **Reddit posts returning empty** | Check your `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET`. Make sure you created a "script" type app. |
-| **Scraping fails on JavaScript sites** | This is expected for first attempt. The tool auto-retries with JS rendering. If still failing, the site may be blocking scrapers. |
+| **Scraping fails on JavaScript sites** | This is expected for the first attempt. The tool auto-retries with JS rendering. If still failing, the site may be blocking scrapers. |
 | **Deep research taking too long** | Use a faster model like `x-ai/grok-4.1-fast` instead of `perplexity/sonar-deep-research`. |
 | **Token limit errors** | Reduce the number of URLs/questions per request. The tool distributes a fixed token budget. |
 
@@ -723,8 +630,6 @@ See `docs/refactoring/07-llm-optimization-summary.md` for full details.
 
 <div align="center">
 
-**Built with 🔥 because manually researching for your AI is a soul-crushing waste of time.**
-
-MIT © [Yiğit Konur](https://github.com/yigitkonur)
+MIT © [Yigit Konur](https://github.com/yigitkonur)
 
 </div>
