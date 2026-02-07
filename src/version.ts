@@ -1,45 +1,37 @@
 /**
  * Version Module - Single Source of Truth
  * 
- * This module reads the version from package.json at runtime.
- * All version references in the codebase should import from here.
+ * This module reads the version from package.json at runtime when running in
+ * Node.js, and falls back to hardcoded values in Cloudflare Workers where
+ * filesystem access is unavailable.
  * 
  * Usage:
  *   import { VERSION, PACKAGE_NAME } from './version.js';
- * 
- * The version is automatically synced with package.json - no manual updates needed.
  */
 
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
-// Create a require function for ESM to import JSON
-const require = createRequire(import.meta.url);
-
-// Get the directory of this file to find package.json
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Load package.json - works from both src/ and dist/
-let packageJson: { version: string; name: string; description: string };
+// Defaults used when running in Workers or if package.json cannot be loaded
+let packageJson: { version: string; name: string; description: string } = {
+  version: '3.6.9',
+  name: 'research-powerpack-mcp',
+  description: 'Research Powerpack MCP Server',
+};
 
 try {
-  // Try loading from project root (when running from dist/)
-  packageJson = require(join(__dirname, '..', 'package.json'));
-} catch {
-  try {
-    // Try loading from two levels up (when running from src/)
-    packageJson = require(join(__dirname, '..', '..', 'package.json'));
-  } catch {
-    // Fallback if package.json can't be found (should never happen)
-    console.error('[Version] Warning: Could not load package.json, using fallback version');
-    packageJson = {
-      version: '0.0.0-unknown',
-      name: 'research-powerpack-mcp',
-      description: 'Research Powerpack MCP Server',
-    };
+  if (typeof import.meta.url === 'string' && import.meta.url.startsWith('file:')) {
+    const _require = createRequire(import.meta.url);
+    const _dirname = dirname(fileURLToPath(import.meta.url));
+    try {
+      packageJson = _require(join(_dirname, '..', 'package.json'));
+    } catch {
+      packageJson = _require(join(_dirname, '..', '..', 'package.json'));
+    }
   }
+} catch {
+  // Workers / edge runtime – keep hardcoded defaults
 }
 
 /**

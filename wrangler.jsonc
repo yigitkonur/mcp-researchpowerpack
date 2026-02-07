@@ -1,6 +1,7 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "mcp-researchpowerpack",
+	"account_id": "08e4791fa1dc3fcc98a7b7bc303081b6",
 	"main": "src/worker.ts",
 	"compatibility_date": "2025-03-10",
 	"compatibility_flags": ["nodejs_compat"],

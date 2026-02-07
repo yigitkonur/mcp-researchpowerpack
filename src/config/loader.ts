@@ -19,9 +19,17 @@ import type {
   LoadedTool,
 } from './types.js';
 
-// Get directory of this file for relative YAML path
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// Get directory of this file for relative YAML path.
+// Guarded so the module can be imported in Cloudflare Workers where
+// import.meta.url is not a file: URL.
+let __configDir: string | undefined;
+try {
+  if (typeof import.meta.url === 'string' && import.meta.url.startsWith('file:')) {
+    __configDir = dirname(fileURLToPath(import.meta.url));
+  }
+} catch {
+  // Workers runtime – leave undefined
+}
 
 // Cached YAML config - loaded once, reused for all subsequent calls
 let cachedYamlConfig: YamlConfig | null = null;
@@ -198,7 +206,10 @@ function zodToMcpInputSchema(schema: z.ZodTypeAny): McpTool['inputSchema'] {
  */
 export function loadYamlConfig(): YamlConfig {
   if (cachedYamlConfig) return cachedYamlConfig;
-  const yamlPath = join(__dirname, 'yaml', 'tools.yaml');
+  if (!__configDir) {
+    throw new Error('YAML loader unavailable: not running in Node.js filesystem context');
+  }
+  const yamlPath = join(__configDir, 'yaml', 'tools.yaml');
   const yamlContent = readFileSync(yamlPath, 'utf8');
   cachedYamlConfig = parseYaml(yamlContent) as YamlConfig;
   return cachedYamlConfig;
@@ -263,8 +274,12 @@ export function loadToolsFromYaml(): LoadedTool[] {
  * Get tool configuration by name
  */
 export function getToolConfig(name: string): YamlToolConfig | undefined {
-  const config = loadYamlConfig();
-  return config.tools.find((t) => t.name === name);
+  try {
+    const config = loadYamlConfig();
+    return config.tools.find((t) => t.name === name);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
