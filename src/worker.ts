@@ -1,15 +1,32 @@
 /**
  * Cloudflare Workers entry point for Research Powerpack MCP
- * Uses the `agents` package McpAgent pattern for Durable Object-backed MCP sessions
+ * Uses the `agents` package McpAgent pattern for Durable Object-backed MCP sessions.
+ *
+ * NOTE: This file deliberately avoids importing from `tools/definitions.ts` because
+ * that module loads YAML from disk via `config/loader.ts` (readFileSync + import.meta.url),
+ * which is incompatible with the Workers runtime. Instead, tools are registered directly
+ * from `toolRegistry` which carries Zod schemas and handlers without filesystem access.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpAgent } from 'agents/mcp';
-import { z } from 'zod';
 
-import { TOOLS } from './tools/definitions.js';
-import { executeTool, getToolCapabilities } from './tools/registry.js';
+import { toolRegistry, executeTool } from './tools/registry.js';
 import { getCapabilities, SERVER } from './config/index.js';
+
+// Short descriptions for each tool (avoids pulling from YAML at runtime)
+const TOOL_DESCRIPTIONS: Record<string, string> = {
+  search_reddit:
+    'Search Reddit with 10-50 diverse parallel queries. Each query targets a different angle.',
+  get_reddit_post:
+    'Fetch Reddit posts and comments. Supports AI extraction via use_llm flag.',
+  deep_research:
+    'Deep research with 2-10 parallel questions and 32K token budget.',
+  scrape_links:
+    'Scrape 1-50 URLs with optional AI content extraction.',
+  web_search:
+    'Parallel Google search with 3-100 keywords returning 10 results each.',
+};
 
 export class ResearchPowerpackMCP extends McpAgent {
   server = new McpServer({
@@ -20,18 +37,18 @@ export class ResearchPowerpackMCP extends McpAgent {
   async init() {
     const capabilities = getCapabilities();
 
-    // Register each tool from TOOLS definitions with the McpServer
-    for (const tool of TOOLS) {
-      // Build a Zod schema from the JSON Schema inputSchema
-      // The tool definitions use JSON Schema, but McpServer.tool() accepts Zod or raw shapes
+    for (const [name, tool] of Object.entries(toolRegistry)) {
+      const description = TOOL_DESCRIPTIONS[name] ?? name;
+      // Extract the raw Zod shape from the ZodObject for McpServer.tool()
+      const shape = (tool.schema as any).shape ?? {};
+
       this.server.tool(
-        tool.name,
-        tool.description,
-        tool.inputSchema as Record<string, unknown>,
+        name,
+        description,
+        shape,
         async (args: Record<string, unknown>) => {
           try {
-            const result = await executeTool(tool.name, args, capabilities);
-            return result;
+            return await executeTool(name, args, capabilities);
           } catch (error) {
             return {
               content: [
