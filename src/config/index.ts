@@ -62,6 +62,12 @@ interface EnvConfig {
 
 let cachedEnv: EnvConfig | null = null;
 
+export function resetEnvCache(): void {
+  cachedEnv = null;
+  cachedResearch = null;
+  cachedLlmExtraction = null;
+}
+
 export function parseEnv(): EnvConfig {
   if (cachedEnv) return cachedEnv;
   cachedEnv = {
@@ -77,17 +83,38 @@ export function parseEnv(): EnvConfig {
 // Research API Configuration
 // ============================================================================
 
-export const RESEARCH = {
-  BASE_URL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
-  MODEL: process.env.RESEARCH_MODEL || 'x-ai/grok-4-fast',
-  FALLBACK_MODEL: process.env.RESEARCH_FALLBACK_MODEL || 'google/gemini-2.5-flash',
-  API_KEY: process.env.OPENROUTER_API_KEY || '',
-  // Timeout: min 1s, max 1hr, default 30min
-  TIMEOUT_MS: safeParseInt(process.env.API_TIMEOUT_MS, 1800000, 1000, 3600000),
-  REASONING_EFFORT: (process.env.DEFAULT_REASONING_EFFORT as 'low' | 'medium' | 'high') || 'high',
-  // Max URLs in search results: min 10, max 200, default 100
-  MAX_URLS: safeParseInt(process.env.DEFAULT_MAX_URLS, 100, 10, 200),
-} as const;
+interface ResearchConfig {
+  readonly BASE_URL: string;
+  readonly MODEL: string;
+  readonly FALLBACK_MODEL: string;
+  readonly API_KEY: string;
+  readonly TIMEOUT_MS: number;
+  readonly REASONING_EFFORT: 'low' | 'medium' | 'high';
+  readonly MAX_URLS: number;
+}
+
+let cachedResearch: ResearchConfig | null = null;
+
+function getResearch(): ResearchConfig {
+  if (cachedResearch) return cachedResearch;
+  cachedResearch = {
+    BASE_URL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+    MODEL: process.env.RESEARCH_MODEL || 'x-ai/grok-4-fast',
+    FALLBACK_MODEL: process.env.RESEARCH_FALLBACK_MODEL || 'google/gemini-2.5-flash',
+    API_KEY: process.env.OPENROUTER_API_KEY || '',
+    TIMEOUT_MS: safeParseInt(process.env.API_TIMEOUT_MS, 1800000, 1000, 3600000),
+    REASONING_EFFORT: (process.env.DEFAULT_REASONING_EFFORT as 'low' | 'medium' | 'high') || 'high',
+    MAX_URLS: safeParseInt(process.env.DEFAULT_MAX_URLS, 100, 10, 200),
+  };
+  return cachedResearch;
+}
+
+// Lazy proxy so existing code using RESEARCH.X still works
+export const RESEARCH: ResearchConfig = new Proxy({} as ResearchConfig, {
+  get(_target, prop: string) {
+    return getResearch()[prop as keyof ResearchConfig];
+  },
+});
 
 // ============================================================================
 // MCP Server Configuration
@@ -186,8 +213,26 @@ export const CTR_WEIGHTS: Record<number, number> = {
 // LLM Extraction Model (uses OPENROUTER for scrape_links AI extraction)
 // ============================================================================
 
-export const LLM_EXTRACTION = {
-  MODEL: process.env.LLM_EXTRACTION_MODEL || 'openai/gpt-oss-120b:nitro',
-  MAX_TOKENS: 8000,
-  ENABLE_REASONING: process.env.LLM_ENABLE_REASONING !== 'false', // Default true, can be disabled with 'false'
-} as const;
+interface LlmExtractionConfig {
+  readonly MODEL: string;
+  readonly MAX_TOKENS: number;
+  readonly ENABLE_REASONING: boolean;
+}
+
+let cachedLlmExtraction: LlmExtractionConfig | null = null;
+
+function getLlmExtraction(): LlmExtractionConfig {
+  if (cachedLlmExtraction) return cachedLlmExtraction;
+  cachedLlmExtraction = {
+    MODEL: process.env.LLM_EXTRACTION_MODEL || 'openai/gpt-oss-120b:nitro',
+    MAX_TOKENS: 8000,
+    ENABLE_REASONING: process.env.LLM_ENABLE_REASONING !== 'false',
+  };
+  return cachedLlmExtraction;
+}
+
+export const LLM_EXTRACTION: LlmExtractionConfig = new Proxy({} as LlmExtractionConfig, {
+  get(_target, prop: string) {
+    return getLlmExtraction()[prop as keyof LlmExtractionConfig];
+  },
+});

@@ -12,7 +12,30 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpAgent } from 'agents/mcp';
 
 import { toolRegistry, executeTool } from './tools/registry.js';
-import { getCapabilities, SERVER } from './config/index.js';
+import { getCapabilities, SERVER, resetEnvCache } from './config/index.js';
+
+/**
+ * Bridge Cloudflare Worker env bindings into process.env so that
+ * config modules (which read process.env) work in both STDIO and Workers.
+ */
+function bridgeEnv(env: Record<string, unknown>): void {
+  const keys = [
+    'OPENROUTER_API_KEY', 'OPENROUTER_BASE_URL',
+    'SERPER_API_KEY', 'SCRAPEDO_API_KEY',
+    'REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET',
+    'RESEARCH_MODEL', 'RESEARCH_FALLBACK_MODEL',
+    'API_TIMEOUT_MS', 'DEFAULT_REASONING_EFFORT', 'DEFAULT_MAX_URLS',
+    'LLM_EXTRACTION_MODEL', 'LLM_ENABLE_REASONING',
+    'DEBUG_REDDIT',
+  ];
+  for (const key of keys) {
+    if (env[key] !== undefined && typeof env[key] === 'string') {
+      process.env[key] = env[key] as string;
+    }
+  }
+  // Reset cached configs so they re-read from the now-populated process.env
+  resetEnvCache();
+}
 
 // Short descriptions for each tool (avoids pulling from YAML at runtime)
 const TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -35,6 +58,11 @@ export class ResearchPowerpackMCP extends McpAgent {
   });
 
   async init() {
+    // Bridge Cloudflare env bindings into process.env for config modules
+    if (this.env) {
+      bridgeEnv(this.env as unknown as Record<string, unknown>);
+    }
+
     const capabilities = getCapabilities();
 
     for (const [name, tool] of Object.entries(toolRegistry)) {
@@ -68,6 +96,11 @@ export class ResearchPowerpackMCP extends McpAgent {
 
 export default {
   fetch(request: Request, env: unknown, ctx: { waitUntil(p: Promise<unknown>): void }) {
+    // Bridge env bindings on every request so config reads work
+    if (env && typeof env === 'object') {
+      bridgeEnv(env as Record<string, unknown>);
+    }
+
     const url = new URL(request.url);
 
     if (url.pathname === '/health') {

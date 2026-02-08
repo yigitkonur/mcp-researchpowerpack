@@ -243,7 +243,7 @@ Research Powerpack supports three transport modes:
 A remote MCP endpoint is deployed and ready to use:
 
 ```
-https://mcp-researchpowerpack.seodoold.workers.dev/mcp
+https://mcp-researchpowerpack.workers.yigitkonur.com/mcp
 ```
 
 Connect from any MCP client that supports HTTP Streamable transport:
@@ -253,7 +253,7 @@ Connect from any MCP client that supports HTTP Streamable transport:
   "mcpServers": {
     "research-powerpack-remote": {
       "type": "streamable-http",
-      "url": "https://mcp-researchpowerpack.seodoold.workers.dev/mcp"
+      "url": "https://mcp-researchpowerpack.workers.yigitkonur.com/mcp"
     }
   }
 }

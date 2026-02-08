@@ -21,5 +21,12 @@
 	},
 	"observability": {
 		"enabled": true
-	}
+	},
+	"workers_dev": true,
+	"routes": [
+		{
+			"pattern": "mcp-researchpowerpack.workers.yigitkonur.com",
+			"custom_domain": true
+		}
+	]
 }
