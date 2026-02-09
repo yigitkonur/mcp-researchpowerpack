@@ -60,8 +60,8 @@ jobs:
           git push && git push --tags
           echo "bumped=true" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to npm
+      - name: Publish to npm (OIDC provenance)
         if: steps.check.outputs.exists == 'false' || steps.bump.outputs.bumped == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: npm publish --access public --provenance
