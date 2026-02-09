@@ -226,6 +226,10 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     }, ms);
 
     signal?.addEventListener('abort', onAbort, { once: true });
+    // Re-check: signal may have aborted between initial check and listener registration
+    if (signal?.aborted) {
+      onAbort();
+    }
   });
 }
 
@@ -292,6 +296,9 @@ export function fetchWithTimeout(
   if (externalSignal) {
     onExternalAbort = () => controller.abort();
     externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    if (externalSignal.aborted) {
+      controller.abort();
+    }
   }
 
   return fetch(url, { ...fetchOptions, signal: controller.signal }).finally(() => {

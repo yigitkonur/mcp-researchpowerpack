@@ -206,7 +206,7 @@ export async function processContentWithLLM(
       if (isRetryableLLMError(err) && attempt < LLM_RETRY_CONFIG.maxRetries) {
         const delayMs = calculateLLMBackoff(attempt);
         mcpLog('warning', `Retrying in ${delayMs}ms...`, 'llm');
-        await sleep(delayMs, signal);
+        try { await sleep(delayMs, signal); } catch { break; }
         continue;
       }
 

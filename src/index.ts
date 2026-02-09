@@ -41,7 +41,6 @@ if (capabilities.scraping && !capabilities.llmExtraction) {
  * Used by both STDIO and HTTP session servers to avoid duplication.
  */
 function registerToolHandlers(srv: Server): void {
-  initLogger(srv);
   srv.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
   srv.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
@@ -65,6 +64,7 @@ const server = new Server(
   { capabilities: { tools: {}, logging: {} } }
 );
 
+initLogger(server);
 registerToolHandlers(server);
 
 // ============================================================================
@@ -264,6 +264,10 @@ if (transportMode === 'http') {
           },
         });
 
+        // Note: initLogger overwrites a global serverRef, so logs from all
+        // HTTP sessions route to the most-recently-initialized session.
+        // A true per-session logger is out of scope for this fix.
+        initLogger(sessionServer);
         registerToolHandlers(sessionServer);
 
         await sessionServer.connect(transport);

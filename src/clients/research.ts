@@ -262,7 +262,7 @@ export class ResearchClient {
         if (this.isRetryableError(error) && attempt < RESEARCH_RETRY_CONFIG.maxRetries) {
           const delayMs = this.calculateBackoff(attempt);
           mcpLog('warning', `Retrying in ${delayMs}ms...`, 'research');
-          await sleep(delayMs, signal);
+          try { await sleep(delayMs, signal); } catch { break; }
           continue;
         }
 

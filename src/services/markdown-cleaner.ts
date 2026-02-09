@@ -12,7 +12,7 @@ const turndown = new TurndownService({
 // Remove script, style, nav, footer, aside elements
 turndown.remove(['script', 'style', 'nav', 'footer', 'aside', 'noscript']);
 
-// Maximum HTML size to process (512KB) - prevents event loop blocking on huge pages
+// ~512K characters (not bytes) - prevents event loop blocking on huge pages
 const MAX_HTML_SIZE = 512 * 1024;
 
 /**
@@ -20,17 +20,20 @@ const MAX_HTML_SIZE = 512 * 1024;
  * Avoids catastrophic backtracking from /<!--[\s\S]*?-->/g on malformed HTML.
  */
 function removeHtmlComments(html: string): string {
-  let result = '';
+  const parts: string[] = [];
   let pos = 0;
   while (pos < html.length) {
     const start = html.indexOf('<!--', pos);
-    if (start === -1) { result += html.substring(pos); break; }
-    result += html.substring(pos, start);
+    if (start === -1) { parts.push(html.substring(pos)); break; }
+    if (start > pos) parts.push(html.substring(pos, start));
     const end = html.indexOf('-->', start + 4);
-    if (end === -1) break; // unclosed comment, discard rest
+    if (end === -1) {
+      parts.push(html.substring(start)); // preserve unclosed comment + rest
+      break;
+    }
     pos = end + 3;
   }
-  return result;
+  return parts.join('');
 }
 
 export class MarkdownCleaner {
