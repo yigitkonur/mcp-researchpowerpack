@@ -15,6 +15,58 @@ import { classifyError, createToolErrorFromStructured } from './utils/errors.js'
 import { SERVER, getCapabilities } from './config/index.js';
 import { initLogger } from './utils/logger.js';
 
+const BROKEN_PIPE_ERROR_CODES = new Set([
+  'EPIPE',
+  'ERR_STREAM_DESTROYED',
+  'ERR_STREAM_WRITE_AFTER_END',
+]);
+
+function extractErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const maybeCode = (error as { code?: unknown }).code;
+  return typeof maybeCode === 'string' ? maybeCode : undefined;
+}
+
+function extractErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return typeof error === 'string' ? error : String(error);
+}
+
+function isBrokenPipeLikeError(error: unknown): boolean {
+  const code = extractErrorCode(error);
+  if (code && BROKEN_PIPE_ERROR_CODES.has(code)) return true;
+
+  const message = extractErrorMessage(error).toLowerCase();
+  return (
+    message.includes('epipe') ||
+    message.includes('broken pipe') ||
+    message.includes('stream destroyed') ||
+    message.includes('write after end')
+  );
+}
+
+function safeStderrWrite(line: string): void {
+  try {
+    process.stderr.write(`${line}\n`);
+  } catch {
+    // Swallow stderr failures while shutting down from stream errors.
+  }
+}
+
+let streamExitInProgress = false;
+let fatalHandlerInProgress = false;
+
+function exitOnBrokenPipe(source: string, error: unknown): void {
+  if (streamExitInProgress || !isBrokenPipeLikeError(error)) return;
+  streamExitInProgress = true;
+  safeStderrWrite(`[MCP Server] ${source} broken pipe at ${new Date().toISOString()}, exiting`);
+  process.exit(fatalHandlerInProgress ? 1 : 0);
+}
+
+// Install stream guards early (before startup logs) to avoid orphaned hot loops.
+process.stdout.on('error', (err) => exitOnBrokenPipe('stdout', err));
+process.stderr.on('error', (err) => exitOnBrokenPipe('stderr', err));
+
 // ============================================================================
 // Capability Detection (uses registry for tool capability mapping)
 // ============================================================================
@@ -85,9 +137,14 @@ async function gracefulShutdown(exitCode: number): Promise<void> {
 
   try {
     await server.close();
-    console.error(`[MCP Server] Server closed at ${new Date().toISOString()}`);
+    safeStderrWrite(`[MCP Server] Server closed at ${new Date().toISOString()}`);
   } catch (closeError) {
-    console.error('[MCP Server] Error closing server:', closeError);
+    if (isBrokenPipeLikeError(closeError)) {
+      // Preserve caller intent: fatal paths should still exit non-zero.
+      process.exit(exitCode);
+      return;
+    }
+    safeStderrWrite(`[MCP Server] Error closing server: ${safeErrorString(closeError)}`);
   } finally {
     process.exit(exitCode);
   }
@@ -122,42 +179,63 @@ function safeErrorString(error: unknown): string {
 
 // Handle uncaught exceptions - MUST EXIT per Node.js docs
 // The VM is in an unstable state after uncaught exception
+
 process.on('uncaughtException', (error: Error) => {
+  if (isBrokenPipeLikeError(error)) {
+    exitOnBrokenPipe('uncaughtException', error);
+    return;
+  }
+  if (fatalHandlerInProgress) {
+    process.exit(1);
+    return;
+  }
+  fatalHandlerInProgress = true;
+
   try {
-    console.error(`[MCP Server] FATAL uncaughtException at ${new Date().toISOString()}:`);
-    console.error(safeErrorString(error));
+    safeStderrWrite(`[MCP Server] FATAL uncaughtException at ${new Date().toISOString()}:`);
+    safeStderrWrite(safeErrorString(error));
   } catch {
     // Even logging failed - just exit
-    console.error('[MCP Server] FATAL uncaughtException (unable to log details)');
+    safeStderrWrite('[MCP Server] FATAL uncaughtException (unable to log details)');
   }
-  gracefulShutdown(1);
+  gracefulShutdown(1).catch(() => process.exit(1));
 });
 
 // Handle unhandled promise rejections - MUST EXIT (Node v15+ behavior)
 // Suppressing this risks memory leaks and corrupted state
 process.on('unhandledRejection', (reason: unknown) => {
+  if (isBrokenPipeLikeError(reason)) {
+    exitOnBrokenPipe('unhandledRejection', reason);
+    return;
+  }
+  if (fatalHandlerInProgress) {
+    process.exit(1);
+    return;
+  }
+  fatalHandlerInProgress = true;
+
   try {
     const error = classifyError(reason);
-    console.error(`[MCP Server] FATAL unhandledRejection at ${new Date().toISOString()}:`);
-    console.error(`  Message: ${error.message}`);
-    console.error(`  Code: ${error.code}`);
+    safeStderrWrite(`[MCP Server] FATAL unhandledRejection at ${new Date().toISOString()}:`);
+    safeStderrWrite(`  Message: ${error.message}`);
+    safeStderrWrite(`  Code: ${error.code}`);
   } catch {
     // classifyError or logging failed, use safeErrorString as fallback
-    console.error('[MCP Server] FATAL unhandledRejection (unable to classify error):');
-    console.error(safeErrorString(reason));
+    safeStderrWrite('[MCP Server] FATAL unhandledRejection (unable to classify error):');
+    safeStderrWrite(safeErrorString(reason));
   }
-  gracefulShutdown(1);
+  gracefulShutdown(1).catch(() => process.exit(1));
 });
 
 // Handle SIGTERM gracefully (Docker/Kubernetes stop signal)
 process.on('SIGTERM', () => {
-  console.error(`[MCP Server] Received SIGTERM at ${new Date().toISOString()}, shutting down gracefully`);
+  safeStderrWrite(`[MCP Server] Received SIGTERM at ${new Date().toISOString()}, shutting down gracefully`);
   gracefulShutdown(0);
 });
 
 // Handle SIGINT gracefully (Ctrl+C) - use once() to prevent double-fire
 process.once('SIGINT', () => {
-  console.error(`[MCP Server] Received SIGINT at ${new Date().toISOString()}, shutting down gracefully`);
+  safeStderrWrite(`[MCP Server] Received SIGINT at ${new Date().toISOString()}, shutting down gracefully`);
   gracefulShutdown(0);
 });
 
@@ -170,21 +248,13 @@ process.once('SIGINT', () => {
 // ============================================================================
 
 process.stdin.on('close', () => {
-  console.error(`[MCP Server] stdin closed (parent disconnected) at ${new Date().toISOString()}, shutting down`);
+  safeStderrWrite(`[MCP Server] stdin closed (parent disconnected) at ${new Date().toISOString()}, shutting down`);
   gracefulShutdown(0);
 });
 
 process.stdin.on('end', () => {
-  console.error(`[MCP Server] stdin ended (parent disconnected) at ${new Date().toISOString()}, shutting down`);
+  safeStderrWrite(`[MCP Server] stdin ended (parent disconnected) at ${new Date().toISOString()}, shutting down`);
   gracefulShutdown(0);
-});
-
-// Also handle stdout errors (broken pipe when parent is gone)
-process.stdout.on('error', (err: NodeJS.ErrnoException) => {
-  if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') {
-    console.error(`[MCP Server] stdout broken pipe at ${new Date().toISOString()}, shutting down`);
-    gracefulShutdown(0);
-  }
 });
 
 // ============================================================================
