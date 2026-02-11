@@ -54,12 +54,13 @@ function safeStderrWrite(line: string): void {
 }
 
 let streamExitInProgress = false;
+let fatalHandlerInProgress = false;
 
 function exitOnBrokenPipe(source: string, error: unknown): void {
   if (streamExitInProgress || !isBrokenPipeLikeError(error)) return;
   streamExitInProgress = true;
   safeStderrWrite(`[MCP Server] ${source} broken pipe at ${new Date().toISOString()}, exiting`);
-  process.exit(0);
+  process.exit(fatalHandlerInProgress ? 1 : 0);
 }
 
 // Install stream guards early (before startup logs) to avoid orphaned hot loops.
@@ -178,7 +179,6 @@ function safeErrorString(error: unknown): string {
 
 // Handle uncaught exceptions - MUST EXIT per Node.js docs
 // The VM is in an unstable state after uncaught exception
-let fatalHandlerInProgress = false;
 
 process.on('uncaughtException', (error: Error) => {
   if (isBrokenPipeLikeError(error)) {
