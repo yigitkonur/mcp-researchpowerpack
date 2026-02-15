@@ -60,11 +60,16 @@ const searchRedditParamsSchema = z.object({
 });
 
 const getRedditPostParamsSchema = z.object({
-  urls: z.array(z.string()).min(2).max(50),
-  fetch_comments: z.boolean().default(true),
-  max_comments: z.number().default(100),
-  use_llm: z.boolean().default(false),
-  what_to_extract: z.string().optional(),
+  urls: z.array(z.string()).min(2).max(50)
+    .describe('2-50 Reddit URLs. More = broader consensus. Get from search_reddit.'),
+  fetch_comments: z.boolean().default(true)
+    .describe('Fetch comments (true recommended - best insights in comments)'),
+  max_comments: z.number().default(100)
+    .describe('Override auto allocation. Leave empty for smart allocation.'),
+  use_llm: z.boolean().default(false)
+    .describe('Default false — DO NOT enable unless user explicitly requests synthesis. Raw comments preserve exact quotes, code snippets, and nuanced opinions that LLM summarization loses.'),
+  what_to_extract: z.string().optional()
+    .describe('Only used when use_llm=true. Extraction instructions for AI synthesis.'),
 });
 
 // ============================================================================

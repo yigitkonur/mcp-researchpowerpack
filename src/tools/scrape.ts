@@ -25,7 +25,12 @@ import {
 // Module-level singleton - MarkdownCleaner is stateless
 const markdownCleaner = new MarkdownCleaner();
 
-// Get extraction suffix from YAML config (fallback to hardcoded if not found)
+// Get extraction prefix+suffix from YAML config (fallback to hardcoded)
+function getExtractionPrefix(): string {
+  const config = getToolConfig('scrape_links');
+  return config?.limits?.extraction_prefix as string || SCRAPER.EXTRACTION_PREFIX;
+}
+
 function getExtractionSuffix(): string {
   const config = getToolConfig('scrape_links');
   return config?.limits?.extraction_suffix as string || SCRAPER.EXTRACTION_SUFFIX;
@@ -33,7 +38,7 @@ function getExtractionSuffix(): string {
 
 function enhanceExtractionInstruction(instruction: string | undefined): string {
   const base = instruction || 'Extract the main content and key information from this page.';
-  return `${base}\n\n${getExtractionSuffix()}`;
+  return `${getExtractionPrefix()}\n\n${base}\n\n${getExtractionSuffix()}`;
 }
 
 /**

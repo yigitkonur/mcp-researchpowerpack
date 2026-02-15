@@ -27,13 +27,13 @@ const scrapeLinksParamsShape = {
     .describe('Timeout in seconds for each URL'),
   use_llm: z
     .boolean({ invalid_type_error: 'scrape_links: use_llm must be a boolean' })
-    .default(false)
-    .describe('Enable AI processing for content extraction (requires OPENROUTER_API_KEY)'),
+    .default(true)
+    .describe('AI extraction enabled by default (requires OPENROUTER_API_KEY). Auto-filters nav/ads/footers, extracts ONLY what you specify. Set false only for raw HTML debugging.'),
   what_to_extract: z
     .string()
     .max(1000, { message: 'scrape_links: Extraction instructions too long (max 1000 characters)' })
     .optional()
-    .describe('Specific content extraction instructions for AI. Will be enhanced with conciseness suffix automatically.'),
+    .describe('Extraction instructions for AI. Will be wrapped with compression prefix+suffix automatically. Formula: "Extract [target1] | [target2] | [target3] with focus on [aspect1], [aspect2]". Min 3 targets with | separator. Be specific (pricing tiers not pricing). Aim 5-10 targets.'),
 };
 
 export const scrapeLinksParamsSchema = z.object(scrapeLinksParamsShape);

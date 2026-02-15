@@ -45,7 +45,7 @@ tools:
     extraction_suffix: "Extract key insights: consensus, recommendations with reasoning, contrasting views, real experiences, technical details. Be comprehensive + concise, prioritize actionable info."
 
     description: |
-      MIN 2 URLs, REC 10-20+. Auto comment budget: 1000 total (2 posts=500 each deep, 10=100 balanced, 20=50 broad coverage). Comments have BEST insights - always fetch_comments=true unless only need titles. use_llm=true for AI extraction (pennies, needs OPENROUTER_API_KEY) - synthesizes consensus, filters noise. Mix subreddits for diverse perspectives. Using 2-5 posts = narrow, missing consensus. 20-30 posts = comprehensive.
+      MIN 2 URLs, REC 10-20+. Auto comment budget: 1000 total (2 posts=500 each deep, 10=100 balanced, 20=50 broad coverage). Comments have BEST insights - always fetch_comments=true unless only need titles. DO NOT use use_llm — default is false. Users need raw exact comments to read verbatim (quotes, code snippets, specific recommendations). LLM summarization loses critical detail and nuance from discussions. Only set use_llm=true if explicitly asked to synthesize across 20+ posts. Mix subreddits for diverse perspectives. Using 2-5 posts = narrow. 20-30 posts = comprehensive.
 
     parameters:
       urls:
@@ -68,11 +68,11 @@ tools:
         type: boolean
         required: false
         default: false
-        description: "AI extraction (recommended). Extracts insights, consensus, filters noise. Needs OPENROUTER_API_KEY."
+        description: "Default false — DO NOT enable unless user explicitly requests synthesis. Raw comments preserve exact quotes, code snippets, nuanced opinions, and specific recommendations that LLM summarization loses. Only consider use_llm=true when processing 20+ posts and user explicitly wants a synthesized overview rather than reading individual comments."
       what_to_extract:
         type: string
         required: false
-        description: "Extraction instructions for AI. Be specific: 'Extract recommendations for X with pros/cons'. More specific = better quality."
+        description: "Only used when use_llm=true. Extraction instructions for AI synthesis. Be specific: 'Extract recommendations for X with pros/cons'."
 
 
   - name: deep_research
@@ -80,10 +80,16 @@ tools:
     capability: deepResearch
     useZodSchema: true
     zodSchemaRef: "deepResearchParamsSchema"
-    limits: {min_questions: 1, max_questions: 10, recommended: 5, min_length: 200, min_specific: 2}
+    limits:
+      min_questions: 1
+      max_questions: 10
+      recommended: 5
+      min_length: 200
+      min_specific: 2
+      research_suffix: "CONSTRAINTS: No restating the question. No hedging preambles. Cite sources inline [source]. NEVER hallucinate — only report what sources confirm."
 
     description: |
-      MIN 2, REC 5-10 questions parallel. 32K tokens distributed (2q=16K/each deep, 5q=6.4K balanced, 10q=3.2K comprehensive). MANDATORY template per question:
+      MIN 2, REC 5-10 questions parallel. 32K tokens distributed (2q=16K/each deep, 5q=6.4K balanced, 10q=3.2K comprehensive). A compression suffix auto-appended to each question (anti-hallucination, cite-inline, no filler). Output uses tables for comparisons/structured data, tight bullets for explanations. MANDATORY template per question:
       "🎯 WHAT I NEED: [clear goal]
       🤔 WHY: [decision/problem]
       📚 WHAT I KNOW: [current understanding - so research fills gaps not basics]
@@ -104,16 +110,17 @@ tools:
     useZodSchema: true
     zodSchemaRef: "scrapeLinksParamsSchema"
     limits: {min_urls: 1, max_urls: 50, recommended: 5, min_extract_len: 50, min_targets: 3}
-    extraction_suffix: "MUST: Comprehensive extraction, high info density, no verbosity, satisfy scope, NEVER hallucinate, only extract grounded info from document. No confirmation messages."
+    extraction_prefix: "Extract ONLY from document — never hallucinate. For structured data (pricing, specs, features) → markdown table. Otherwise → tight bullet points. No intro, no confirmation message, no meta-commentary."
+    extraction_suffix: "Output grounded info only. First line = content, not preamble."
 
     description: |
-      REC 3-5 URLs. ALWAYS use_llm=true - AI extraction is this tool's superpower! use_llm=false gives raw HTML (messy, hours manual parsing). use_llm=true: auto-filters nav/ads/footers, extracts ONLY what you specify, handles complex structures, returns clean ready-to-use content, costs pennies (~$0.01/10 pages) vs hours work. 32K tokens (3=10K each, 5=6K, 10=3K, 50=640). Formula: "Extract [t1] | [t2] | [t3] | [t4] | [t5] with focus on [a1], [a2], [a3]". Min 3 targets with | separator, be specific (pricing tiers not pricing), aim 5-10 targets. Templates: Product (pricing|features|reviews|specs|integrations|support), Tech Docs (endpoints|auth|limits|errors|examples|schemas), Competitive (features|pricing|customers|USPs|stack|testimonials).
+      REC 3-5 URLs. use_llm=true BY DEFAULT — AI extraction auto-filters nav/ads/footers, returns clean structured content. A compression prefix+suffix wraps your prompt automatically for max info density. 32K tokens (3=10K each, 5=6K, 10=3K, 50=640). PROMPT FORMULA — keep it tight, no verbosity: "Extract [t1] | [t2] | [t3] | [t4] | [t5] with focus on [a1], [a2], [a3]". Min 3 targets with | separator. Be specific (pricing tiers not pricing). Aim 5-10 targets. BAD: "Please extract all information about pricing and features from this page" → GOOD: "pricing tiers|limits|features|integrations|API auth|rate limits with focus on free tier, enterprise pricing". Templates: Product (pricing|features|reviews|specs|integrations|support), Tech Docs (endpoints|auth|limits|errors|examples|schemas), Competitive (features|pricing|customers|USPs|stack|testimonials). Set use_llm=false ONLY for raw HTML debugging.
 
     schemaDescriptions:
       urls: "1-50 URLs (3-5 recommended). More URLs = broader coverage, fewer tokens/URL."
       timeout: "Timeout per URL (5-120s, default 30)"
-      use_llm: "ALWAYS SET TRUE (default false but override it). AI extraction is tool's superpower - auto-filters nav/ads/footers, extracts ONLY your specified targets, returns clean structured content ready to use. Raw HTML (use_llm=false) is messy noise requiring hours parsing. Cost: ~$0.001/page (pennies). Needs OPENROUTER_API_KEY."
-      what_to_extract: "REQUIRED when use_llm=true. Formula: 'Extract [target1] | [target2] | [target3] | [target4] | [target5] with focus on [aspect1], [aspect2], [aspect3]'. Min 50 chars, min 3 targets with | separator. Be super specific (pricing tiers not pricing, API rate limits not API info). Aim 5-10 targets. Act like detailed LLM instruction. More specific targets = higher extraction quality. Include 'with focus on' to prioritize aspects."
+      use_llm: "Defaults to true. AI extraction auto-filters noise, extracts only specified targets, returns clean structured content. Compression prefix+suffix auto-applied to maximize info density. Cost: ~$0.001/page. Set false ONLY for raw HTML debugging. Needs OPENROUTER_API_KEY."
+      what_to_extract: "Your extraction targets — auto-wrapped with compression prefix+suffix. Formula: 'pricing tiers|limits|features|integrations|API auth with focus on free tier, enterprise'. Min 3 targets with | separator. Be terse and specific (pricing tiers not pricing, API rate limits not API info). No verbose sentences — just targets+focus. The system adds compression instructions automatically."
 
 
   - name: web_search

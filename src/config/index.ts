@@ -174,7 +174,16 @@ export const SCRAPER = {
   MAX_URLS: 50,
   RETRY_COUNT: 3,
   RETRY_DELAYS: [2000, 4000, 8000] as const,
-  EXTRACTION_SUFFIX: 'Try to answer this information as comprehensive as possible while keeping info density super high without adding unnecessary words but satisfy the scope defined by previous instructions even more.',
+  EXTRACTION_PREFIX: 'Extract ONLY from document — never hallucinate. For structured data (pricing, specs, features) → markdown table. Otherwise → tight bullet points. No intro, no confirmation message, no meta-commentary.',
+  EXTRACTION_SUFFIX: 'Output grounded info only. First line = content, not preamble.',
+} as const;
+
+// ============================================================================
+// Research Compression Prefix/Suffix
+// ============================================================================
+
+export const RESEARCH_PROMPTS = {
+  SUFFIX: `CONSTRAINTS: No restating the question. No hedging preambles. Cite sources inline [source]. NEVER hallucinate — only report what sources confirm.`,
 } as const;
 
 // ============================================================================

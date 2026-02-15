@@ -6,7 +6,8 @@
 import type { DeepResearchParams } from '../schemas/deep-research.js';
 import { ResearchClient, type ResearchResponse } from '../clients/research.js';
 import { FileAttachmentService } from '../services/file-attachment.js';
-import { RESEARCH } from '../config/index.js';
+import { RESEARCH, RESEARCH_PROMPTS } from '../config/index.js';
+import { getToolConfig } from '../config/loader.js';
 import { classifyError } from '../utils/errors.js';
 import { pMap } from '../utils/concurrency.js';
 import {
@@ -32,22 +33,25 @@ interface QuestionResult {
   tokensUsed?: number;
 }
 
-const SYSTEM_PROMPT = `You are an expert research consultant. Provide evidence-based, multi-perspective analysis.
+const SYSTEM_PROMPT = `Expert research engine. Multi-source: docs, papers, blogs, case studies. Cite inline [source].
 
-METHODOLOGY:
-- SOURCE DIVERSITY: Official docs, papers, blogs, case studies
-- CURRENT + HISTORICAL: Latest developments AND context
-- MULTIPLE PERSPECTIVES: Different approaches with pros/cons
-- EVIDENCE-BASED: Claims backed by citations
+FORMAT RULES:
+- For comparisons/features/structured data → use markdown table |Col|Col|Col|
+- For narrative/diagnostic/explanation → tight numbered bullets, no prose paragraphs
+- No intro, no greeting, no conclusion, no meta-commentary
+- No filler phrases: "it is worth noting", "overall", "in conclusion", "importantly"
+- Every sentence = fact, data point, or actionable insight
+- First line of output = content (never a preamble)`;
 
-FORMAT (high info density):
-- CURRENT STATE: Status quo, what we know
-- KEY INSIGHTS: Most important findings with evidence
-- TRADE-OFFS: Competing priorities honestly analyzed
-- PRACTICAL IMPLICATIONS: Real-world application
-- WHAT'S CHANGING: Recent developments
+// Get research suffix from YAML config (fallback to hardcoded)
+function getResearchSuffix(): string {
+  const config = getToolConfig('deep_research');
+  return config?.limits?.research_suffix as string || RESEARCH_PROMPTS.SUFFIX;
+}
 
-Be dense with insights, light on filler. Use examples and citations.`;
+function wrapQuestionWithCompression(question: string): string {
+  return `${question}\n\n${getResearchSuffix()}`;
+}
 
 /**
  * Handle deep research request
@@ -121,6 +125,9 @@ export async function handleDeepResearch(
           mcpLog('warning', `Failed to process attachments for question ${index + 1}`, 'research');
         }
       }
+
+      // Wrap with compression prefix+suffix for max info density
+      enhancedQuestion = wrapQuestionWithCompression(enhancedQuestion);
 
       // ResearchClient.research() returns error in response instead of throwing
       const response = await client.research({
