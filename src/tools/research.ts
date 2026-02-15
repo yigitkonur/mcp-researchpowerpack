@@ -6,7 +6,8 @@
 import type { DeepResearchParams } from '../schemas/deep-research.js';
 import { ResearchClient, type ResearchResponse } from '../clients/research.js';
 import { FileAttachmentService } from '../services/file-attachment.js';
-import { RESEARCH } from '../config/index.js';
+import { RESEARCH, RESEARCH_PROMPTS } from '../config/index.js';
+import { getToolConfig } from '../config/loader.js';
 import { classifyError } from '../utils/errors.js';
 import { pMap } from '../utils/concurrency.js';
 import {
@@ -32,22 +33,26 @@ interface QuestionResult {
   tokensUsed?: number;
 }
 
-const SYSTEM_PROMPT = `You are an expert research consultant. Provide evidence-based, multi-perspective analysis.
+const SYSTEM_PROMPT = `Expert research engine. Multi-source: docs, papers, blogs, case studies. Cite inline [source].
 
-METHODOLOGY:
-- SOURCE DIVERSITY: Official docs, papers, blogs, case studies
-- CURRENT + HISTORICAL: Latest developments AND context
-- MULTIPLE PERSPECTIVES: Different approaches with pros/cons
-- EVIDENCE-BASED: Claims backed by citations
+FORMAT RULES:
+- For comparisons/features/structured data → use markdown table |Col|Col|Col|
+- For narrative/diagnostic/explanation → tight numbered bullets, no prose paragraphs
+- No intro, no greeting, no conclusion, no meta-commentary
+- No filler phrases: "it is worth noting", "overall", "in conclusion", "importantly"
+- Every sentence = fact, data point, or actionable insight
+- First line of output = content (never a preamble)`;
 
-FORMAT (high info density):
-- CURRENT STATE: Status quo, what we know
-- KEY INSIGHTS: Most important findings with evidence
-- TRADE-OFFS: Competing priorities honestly analyzed
-- PRACTICAL IMPLICATIONS: Real-world application
-- WHAT'S CHANGING: Recent developments
+// Get research suffix from YAML config (fallback to hardcoded)
+function getResearchSuffix(): string {
+  const config = getToolConfig('deep_research');
+  const suffix = config?.limits?.research_suffix;
+  return typeof suffix === 'string' ? suffix : RESEARCH_PROMPTS.SUFFIX;
+}
 
-Be dense with insights, light on filler. Use examples and citations.`;
+function wrapQuestionWithCompression(question: string): string {
+  return `${question}\n\n${getResearchSuffix()}`;
+}
 
 /**
  * Handle deep research request
@@ -66,7 +71,7 @@ export async function handleDeepResearch(
         code: 'MIN_QUESTIONS',
         message: `Minimum ${MIN_QUESTIONS} research question(s) required. Received: ${questions.length}`,
         toolName: 'deep_research',
-        howToFix: ['Add at least one question with detailed context'],
+        howToFix: ['Add at least one question with detailed context following the template: WHAT I NEED, WHY, WHAT I KNOW, SPECIFIC QUESTIONS'],
       }),
       structuredContent: { error: true, message: `Minimum ${MIN_QUESTIONS} question(s) required` },
     };
@@ -99,6 +104,11 @@ export async function handleDeepResearch(
         message: `Failed to initialize research client: ${err.message}`,
         toolName: 'deep_research',
         howToFix: ['Check OPENROUTER_API_KEY is set'],
+        alternatives: [
+          'web_search(keywords=["topic best practices", "topic guide", "topic comparison 2025"]) — uses Serper API (different key), search for information directly',
+          'search_reddit(queries=["topic recommendations", "topic experience", "topic discussion"]) — uses Serper API, get community perspective',
+          'scrape_links(urls=[...any relevant URLs...], use_llm=true) — if you have URLs, scrape them for content (uses Firecrawl + OpenRouter, may also fail if OpenRouter key is the issue)',
+        ],
       }),
       structuredContent: { error: true, message: `Failed to initialize: ${err.message}` },
     };
@@ -121,6 +131,9 @@ export async function handleDeepResearch(
           mcpLog('warning', `Failed to process attachments for question ${index + 1}`, 'research');
         }
       }
+
+      // Append compression suffix for info density constraints
+      enhancedQuestion = wrapQuestionWithCompression(enhancedQuestion);
 
       // ResearchClient.research() returns error in response instead of throwing
       const response = await client.research({
@@ -199,9 +212,11 @@ export async function handleDeepResearch(
   }
 
   const nextSteps = [
-    successful.length > 0 ? 'Scrape mentioned sources: scrape_links(urls=[...extracted URLs...], use_llm=true)' : null,
+    successful.length > 0 ? 'SCRAPE CITED SOURCES: scrape_links(urls=[...URLs cited in research above...], use_llm=true, what_to_extract="Extract evidence | data | methodology | conclusions") — verify research citations with primary sources' : null,
+    successful.length > 0 ? 'COMMUNITY VALIDATION: search_reddit(queries=["topic findings", "topic real experience", "topic criticism"]) — check if community agrees with research findings' : null,
+    successful.length > 0 ? 'ITERATE: If research revealed gaps or new questions, run deep_research again with refined questions targeting those gaps' : null,
+    successful.length > 0 ? 'WEB VERIFY: web_search(keywords=["specific claim from research", "topic latest data 2025"]) — if claims need independent verification' : null,
     failed.length > 0 ? 'Retry failed questions with more specific context' : null,
-    'Search Reddit for community perspective: search_reddit(queries=[...related topics...])',
   ].filter(Boolean) as string[];
 
   const formattedContent = formatSuccess({
