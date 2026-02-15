@@ -49,20 +49,20 @@ else
 fi
 
 # --------------------------------------------------------------------------
-# 3. Install dependencies with npm
+# 3. Install dependencies with pnpm
 # --------------------------------------------------------------------------
-echo "==> Installing dependencies with npm ci ..."
+echo "==> Installing dependencies with pnpm install --frozen-lockfile ..."
 cd "${WORKTREE_DIR}"
-npm ci --ignore-scripts 2>&1 | tail -1
+pnpm install --frozen-lockfile 2>&1 | tail -1
 echo "==> Dependencies installed"
 
 # --------------------------------------------------------------------------
 # 4. Build the project
 # --------------------------------------------------------------------------
-echo "==> Building project (tsc + copy yaml config) ..."
-npm run build 2>&1 | tail -3
+echo "==> Building project ..."
+pnpm build 2>&1 | tail -3
 echo "==> Build complete"
 
 echo ""
 echo "==> Worktree ready at: ${WORKTREE_DIR}"
-echo "    Run 'npm run dev' to start in development mode."
+echo "    Run 'pnpm dev' to start in development mode."
