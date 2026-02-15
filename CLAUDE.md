@@ -9,19 +9,19 @@ MCP server providing 5 research tools to AI assistants: web search (Google via S
 ## Build & Run
 
 ```bash
-npm run build           # tsc + copy src/config/yaml/ to dist/config/
-npm run dev             # tsx live TypeScript
-npm start               # node dist/index.js
-npm run typecheck       # type check without emitting (does NOT check worker.ts)
+pnpm build           # tsc + copy src/config/yaml/ to dist/config/
+pnpm dev             # tsx live TypeScript
+pnpm start               # node dist/index.js
+pnpm typecheck       # type check without emitting (does NOT check worker.ts)
 ```
 
 ```bash
-npm run test:web-search     # test web search tool
-npm run test:reddit-search  # test Reddit search
-npm run test:scrape-links   # test scraping
-npm run test:deep-research  # test deep research
-npm run test:all            # run all tests
-npm run test:check          # check environment setup
+pnpm test:web-search     # test web search tool
+pnpm test:reddit-search  # test Reddit search
+pnpm test:scrape-links   # test scraping
+pnpm test:deep-research  # test deep research
+pnpm test:all            # run all tests
+pnpm test:check          # check environment setup
 ```
 
 Transport modes:
@@ -116,7 +116,7 @@ src/
 ## Gotchas
 
 - **ESM project** (`"type": "module"`) — all imports must use `.js` extensions.
-- **worker.ts excluded from tsconfig** — `npm run typecheck` does NOT check the Workers entry point. Use `npx wrangler deploy --dry-run` to verify.
+- **worker.ts excluded from tsconfig** — `pnpm typecheck` does NOT check the Workers entry point. Use `npx wrangler deploy --dry-run` to verify.
 - **Build copies YAML** — the build script copies `src/config/yaml/` to `dist/config/`. New YAML files must be in this directory.
 - **version.ts hardcoded fallback** — has a stale fallback version for Workers runtime where `package.json` is unavailable. Can drift from actual version.
 - **All OpenAI client instances set `maxRetries: 0`** — retry logic is handled manually with custom backoff.

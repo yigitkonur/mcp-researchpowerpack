@@ -219,7 +219,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Uses `getToolCapabilities()` for startup logging
 
 - **Build Process** - Updated to copy YAML files to dist
-  - `npm run build` now includes `cp -r src/config/yaml dist/config/`
+  - `pnpm build` now includes `cp -r src/config/yaml dist/config/`
 
 ### Dependencies
 

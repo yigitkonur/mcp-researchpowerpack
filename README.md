@@ -113,7 +113,7 @@ This isn't just fetching random pages. Research Powerpack builds **high-signal, 
 ### 1. Install
 
 ```bash
-npm install research-powerpack-mcp
+pnpm add research-powerpack-mcp
 ```
 
 ### 2. Configure Your MCP Client
@@ -657,10 +657,10 @@ LLM_EXTRACTION_MODEL=openai/gpt-4o-mini
 ```bash
 git clone https://github.com/yigitkonur/mcp-researchpowerpack.git
 cd mcp-researchpowerpack
-npm install
-npm run dev
-npm run build
-npm run typecheck
+pnpm install
+pnpm dev
+pnpm build
+pnpm typecheck
 ```
 
 ---
