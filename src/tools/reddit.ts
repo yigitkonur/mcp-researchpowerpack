@@ -86,7 +86,7 @@ export async function handleSearchReddit(
           'Remove date filters if using them',
         ],
         alternatives: [
-          'web_search(keywords=[...]) for general web results',
+          'search_google(keywords=[...]) for general web results',
           'deep_research(questions=[...]) for synthesized analysis',
         ],
       });
@@ -105,7 +105,7 @@ export async function handleSearchReddit(
       retryable: structuredError.retryable,
       toolName: 'search_reddit',
       howToFix: ['Verify SERPER_API_KEY is set correctly'],
-      alternatives: ['web_search(keywords=[...]) as backup'],
+      alternatives: ['search_google(keywords=[...]) as backup'],
     });
   }
 }
@@ -123,18 +123,17 @@ interface GetRedditPostsOptions {
 
 // Get extraction suffix from YAML config (fallback to hardcoded if not found)
 function getExtractionSuffix(): string {
-  const config = getToolConfig('get_reddit_post');
+  const config = getToolConfig('fetch_reddit');
   return config?.limits?.extraction_suffix as string || `
+
 ---
 
-⚠️ IMPORTANT: Extract and synthesize the key insights, opinions, and recommendations from these Reddit discussions. Focus on:
-- Common themes and consensus across posts
-- Specific recommendations with context
-- Contrasting viewpoints and debates
-- Real-world experiences and lessons learned
-- Technical details and implementation tips
-
-Be comprehensive but concise. Prioritize actionable insights.
+MUST-DO RULES for extraction:
+- VERIFY WHAT REDDIT SAYS: Quote the actual community consensus, not your assumptions
+- FOLLOW THE LINKS: Note any external URLs or resources the community recommends
+- HIGH INFO DENSITY: Every sentence must contain a fact, opinion, or recommendation
+- NO FILLER: Skip meta-commentary about the posts themselves
+- INCLUDE SCORES: Note upvote counts for top comments to signal community agreement
 
 ---`;
 }
@@ -155,19 +154,28 @@ export async function handleGetRedditPosts(
     const { fetchComments = true, maxCommentsOverride, use_llm = false, what_to_extract } = options;
 
     if (urls.length < REDDIT.MIN_POSTS) {
+      const deficit = REDDIT.MIN_POSTS - urls.length;
       return formatError({
         code: 'MIN_POSTS',
-        message: `Minimum ${REDDIT.MIN_POSTS} Reddit posts required. Received: ${urls.length}`,
-        toolName: 'get_reddit_post',
-        howToFix: [`Add at least ${REDDIT.MIN_POSTS - urls.length} more Reddit URL(s)`],
+        message: `Minimum ${REDDIT.MIN_POSTS} Reddit posts required. Received: ${urls.length}. Add ${deficit} more URL(s) from search_reddit results and retry immediately.`,
+        toolName: 'fetch_reddit',
+        howToFix: [
+          `Add ${deficit} more Reddit URL(s) — use search_reddit(queries=[...]) to find more posts`,
+          'Tip: search_reddit returns ranked URLs ready to pass directly to fetch_reddit',
+        ],
+        alternatives: [
+          'search_reddit(queries=[...]) — find more Reddit posts to fetch',
+          'deep_research(questions=[...]) — research without needing Reddit credentials',
+        ],
       });
     }
     if (urls.length > REDDIT.MAX_POSTS) {
+      const excess = urls.length - REDDIT.MAX_POSTS;
       return formatError({
         code: 'MAX_POSTS',
-        message: `Maximum ${REDDIT.MAX_POSTS} Reddit posts allowed. Received: ${urls.length}`,
-        toolName: 'get_reddit_post',
-        howToFix: [`Remove ${urls.length - REDDIT.MAX_POSTS} URL(s) and retry`],
+        message: `Maximum ${REDDIT.MAX_POSTS} Reddit posts allowed. Received: ${urls.length}. Remove ${excess} URL(s) and retry.`,
+        toolName: 'fetch_reddit',
+        howToFix: [`Remove ${excess} URL(s) — keep the highest-scoring posts`],
       });
     }
 
@@ -242,9 +250,10 @@ export async function handleGetRedditPosts(
     }
 
     const nextSteps = [
-      successful > 0 ? 'Research further: deep_research(questions=[{question: "Based on Reddit discussion..."}])' : null,
-      failed > 0 ? 'Retry failed URLs individually' : null,
-      'Search related topics: search_reddit(queries=[...related terms...])',
+      successful > 0 ? '1. VERIFY WHAT REDDIT SAYS — deep_research(questions=[{question: "Based on Reddit discussion, what is the community consensus on [topic]?"}])' : null,
+      successful > 0 ? '2. FOLLOW THE LINKS — scrape_pages(urls=[...external URLs mentioned in posts...], use_llm=true)' : null,
+      failed > 0 ? '3. RETRY failed URLs individually with longer timeout' : null,
+      '4. BROADEN SEARCH — search_reddit(queries=[...related terms from discussions...])',
     ].filter(Boolean) as string[];
 
     const extraStatus = statusExtras.length > 0 ? `\n${statusExtras.join(' | ')}` : '';
@@ -261,8 +270,16 @@ export async function handleGetRedditPosts(
       code: structuredError.code,
       message: structuredError.message,
       retryable: structuredError.retryable,
-      toolName: 'get_reddit_post',
-      howToFix: ['Verify REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET are set'],
+      toolName: 'fetch_reddit',
+      howToFix: [
+        'Verify REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET are set',
+        'Create a Reddit app at https://www.reddit.com/prefs/apps (free)',
+      ],
+      alternatives: [
+        'search_reddit(queries=[...]) — searches Reddit without OAuth credentials',
+        'scrape_pages(urls=[...reddit URLs...]) — scrapes Reddit pages directly',
+        'deep_research(questions=[...]) — research without Reddit credentials',
+      ],
     });
   }
 }

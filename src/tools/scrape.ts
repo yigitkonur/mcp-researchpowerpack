@@ -25,15 +25,24 @@ import {
 // Module-level singleton - MarkdownCleaner is stateless
 const markdownCleaner = new MarkdownCleaner();
 
-// Get extraction suffix from YAML config (fallback to hardcoded if not found)
-function getExtractionSuffix(): string {
-  const config = getToolConfig('scrape_links');
-  return config?.limits?.extraction_suffix as string || SCRAPER.EXTRACTION_SUFFIX;
+// Get extraction prefix+suffix from YAML config (fallback to hardcoded)
+function getExtractionPrefix(): string {
+  const config = getToolConfig('scrape_pages');
+  const prefix = config?.limits?.extraction_prefix;
+  return typeof prefix === 'string' ? prefix : SCRAPER.EXTRACTION_PREFIX;
 }
 
-function enhanceExtractionInstruction(instruction: string | undefined): string {
+function getExtractionSuffix(): string {
+  const config = getToolConfig('scrape_pages');
+  const suffix = config?.limits?.extraction_suffix;
+  return typeof suffix === 'string' ? suffix : SCRAPER.EXTRACTION_SUFFIX;
+}
+
+function buildEnhancedInstruction(instruction: string | undefined): string {
+  const prefix = getExtractionPrefix();
   const base = instruction || 'Extract the main content and key information from this page.';
-  return `${base}\n\n${getExtractionSuffix()}`;
+  const suffix = getExtractionSuffix();
+  return `${prefix ? prefix + '\n\n' : ''}${base}\n\n${suffix}`;
 }
 
 /**
@@ -51,8 +60,12 @@ export async function handleScrapeLinks(
       code,
       message,
       retryable,
-      toolName: 'scrape_links',
+      toolName: 'scrape_pages',
       howToFix: code === 'NO_URLS' ? ['Provide at least one valid URL'] : undefined,
+      alternatives: [
+        'deep_research(questions=[...]) — research without needing a scraper API key',
+        'search_google(keywords=[...]) — find alternative URLs to scrape',
+      ],
     }),
     structuredContent: {
       content: message,
@@ -105,7 +118,7 @@ export async function handleScrapeLinks(
   const llmProcessor = createLLMProcessor(); // Returns null if not configured
 
   const enhancedInstruction = params.use_llm
-    ? enhanceExtractionInstruction(params.what_to_extract)
+    ? buildEnhancedInstruction(params.what_to_extract)
     : undefined;
 
   // Scrape URLs - scrapeMultiple NEVER throws
@@ -176,7 +189,7 @@ export async function handleScrapeLinks(
 
       const llmResult = await processContentWithLLM(
         item.content,
-        { use_llm: params.use_llm, what_to_extract: enhancedInstruction, max_tokens: tokensPerUrl },
+        { use_llm: params.use_llm, what_to_extract: enhancedInstruction, max_tokens: tokensPerUrl, model: params.model },
         llmProcessor
       );
 
@@ -226,9 +239,10 @@ export async function handleScrapeLinks(
   });
 
   const nextSteps = [
-    successful > 0 ? `Extract specific data: scrape_links(urls=[...], use_llm=true, what_to_extract="Extract pricing | features | testimonials")` : null,
-    failed > 0 ? `Retry failed URLs with longer timeout: scrape_links(urls=[...], timeout=60)` : null,
-    'Research further: deep_research(questions=[{question: "Based on scraped content..."}])',
+    successful > 0 ? `1. VERIFY CONTENT — deep_research(questions=[{question: "Based on scraped content, what are the key findings for [topic]?"}])` : null,
+    successful > 0 ? `2. EXTRACT SPECIFIC DATA — scrape_pages(urls=[...same URLs...], use_llm=true, what_to_extract="Extract pricing tiers | feature list | testimonials | API limits")` : null,
+    failed > 0 ? `3. RETRY failed URLs with longer timeout: scrape_pages(urls=[...failed URLs...], timeout=60)` : null,
+    '4. FIND MORE SOURCES — search_google(keywords=[...related topics...])',
   ].filter(Boolean) as string[];
 
   const formattedContent = formatSuccess({

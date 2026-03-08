@@ -55,17 +55,27 @@ export type ToolRegistry = Record<string, ToolRegistration>;
 // ============================================================================
 
 const searchRedditParamsSchema = z.object({
-  queries: z.array(z.string()).min(10).max(50),
+  queries: z.array(z.string()).min(3).max(50),
   date_after: z.string().optional(),
 });
 
-const getRedditPostParamsSchema = z.object({
-  urls: z.array(z.string()).min(2).max(50),
-  fetch_comments: z.boolean().default(true),
-  max_comments: z.number().default(100),
-  use_llm: z.boolean().default(false),
-  what_to_extract: z.string().optional(),
+const fetchRedditSchema = z.object({
+  urls: z.array(z.string()).min(2).max(50).describe('2-50 Reddit URLs. Use search_reddit results as input.'),
+  fetch_comments: z.boolean().default(true).describe('Fetch comment trees (recommended true).'),
+  max_comments: z.number().default(100).describe('Optional comment budget override.'),
+  use_llm: z.boolean().default(false).describe('LLM summarization toggle (default false). Keep false for exact quote/code fidelity; enable for concise+comprehensive synthesis when requested.'),
+  what_to_extract: z.string().optional().describe('Optional extraction/synthesis targets when use_llm=true. You may request markdown tables or nested lists (max depth 5).'),
 });
+
+// ============================================================================
+// Tool Aliases (backward-compat + rename support)
+// ============================================================================
+
+const TOOL_ALIASES: Record<string, string> = {
+  web_search: 'search_google',
+  get_reddit_post: 'fetch_reddit',
+  scrape_links: 'scrape_pages',
+};
 
 // ============================================================================
 // Handler Wrappers
@@ -82,10 +92,10 @@ async function searchRedditHandler(params: unknown): Promise<string> {
 }
 
 /**
- * Wrapper for get_reddit_post handler
+ * Wrapper for fetch_reddit handler
  */
-async function getRedditPostHandler(params: unknown): Promise<string> {
-  const p = params as z.infer<typeof getRedditPostParamsSchema>;
+async function fetchRedditHandler(params: unknown): Promise<string> {
+  const p = params as z.infer<typeof fetchRedditSchema>;
   return handleGetRedditPosts(
     p.urls,
     env.REDDIT_CLIENT_ID || '',
@@ -109,7 +119,7 @@ async function deepResearchHandler(params: unknown): Promise<string> {
 }
 
 /**
- * Wrapper for scrape_links handler
+ * Wrapper for scrape_pages handler
  */
 async function scrapeLinksHandler(params: unknown): Promise<string> {
   const { content } = await handleScrapeLinks(params as ScrapeLinksParams);
@@ -117,7 +127,7 @@ async function scrapeLinksHandler(params: unknown): Promise<string> {
 }
 
 /**
- * Wrapper for web_search handler
+ * Wrapper for search_google handler
  */
 async function webSearchHandler(params: unknown): Promise<string> {
   const { content } = await handleWebSearch(params as WebSearchParams);
@@ -139,11 +149,11 @@ export const toolRegistry: ToolRegistry = {
     handler: searchRedditHandler,
   },
 
-  get_reddit_post: {
-    name: 'get_reddit_post',
+  fetch_reddit: {
+    name: 'fetch_reddit',
     capability: 'reddit',
-    schema: getRedditPostParamsSchema,
-    handler: getRedditPostHandler,
+    schema: fetchRedditSchema,
+    handler: fetchRedditHandler,
   },
 
   deep_research: {
@@ -157,8 +167,8 @@ export const toolRegistry: ToolRegistry = {
     }),
   },
 
-  scrape_links: {
-    name: 'scrape_links',
+  scrape_pages: {
+    name: 'scrape_pages',
     capability: 'scraping',
     schema: scrapeLinksParamsSchema,
     handler: scrapeLinksHandler,
@@ -168,14 +178,14 @@ export const toolRegistry: ToolRegistry = {
     }),
   },
 
-  web_search: {
-    name: 'web_search',
+  search_google: {
+    name: 'search_google',
     capability: 'search',
     schema: webSearchParamsSchema,
     handler: webSearchHandler,
     transformResponse: (result) => ({
       content: result,
-      isError: result.includes('# ❌ web_search'),
+      isError: result.includes('# ❌ search_google'),
     }),
   },
 };
@@ -188,7 +198,7 @@ export const toolRegistry: ToolRegistry = {
  * Execute a tool by name with full middleware chain
  *
  * Middleware steps:
- * 1. Lookup tool in registry (throw McpError if not found)
+ * 1. Resolve aliases and lookup tool in registry (throw McpError if not found)
  * 2. Check capability (return error response if missing)
  * 3. Validate params with Zod (return error response if invalid)
  * 4. Execute handler (catch and format any errors)
@@ -204,8 +214,9 @@ export async function executeTool(
   args: unknown,
   capabilities: Capabilities
 ): Promise<CallToolResult> {
-  // Step 1: Lookup tool
-  const tool = toolRegistry[name];
+  // Step 1: Resolve aliases and lookup tool
+  const resolvedName = TOOL_ALIASES[name] ?? name;
+  const tool = toolRegistry[resolvedName];
   if (!tool) {
     throw new McpError(
       McpErrorCode.MethodNotFound,
@@ -228,10 +239,25 @@ export async function executeTool(
   } catch (error) {
     if (error instanceof ZodError) {
       const issues = error.issues
-        .map((i) => `- **${i.path.join('.') || 'root'}**: ${i.message}`)
+        .map((i) => {
+          const field = i.path.join('.') || 'root';
+          let fix = '';
+          if (i.code === 'too_small' && 'minimum' in i) {
+            const received = 'received' in i ? (i as { received?: number }).received : undefined;
+            const deficit = typeof received === 'number' ? Math.max(0, (i.minimum as number) - received) : undefined;
+            fix = deficit !== undefined
+              ? `\n  **Quick fix:** Add ${deficit} more item(s) to meet the minimum of ${i.minimum}.`
+              : `\n  **Quick fix:** Add more items to meet the minimum of ${i.minimum}.`;
+          } else if (i.code === 'too_big' && 'maximum' in i) {
+            fix = `\n  **Quick fix:** Remove excess items to stay at or below ${i.maximum}.`;
+          } else if (i.code === 'invalid_type') {
+            fix = `\n  **Quick fix:** Expected ${i.expected}, got ${i.received}.`;
+          }
+          return `- **${field}**: ${i.message}${fix}`;
+        })
         .join('\n');
       return {
-        content: [{ type: 'text', text: `# ❌ Validation Error\n\n${issues}` }],
+        content: [{ type: 'text', text: `# ❌ Validation Error — Fix & Retry\n\n${issues}\n\nCorrect the parameter(s) above and call the tool again immediately.` }],
         isError: true,
       };
     }
@@ -245,7 +271,7 @@ export async function executeTool(
     const postError = tool.postValidate(validatedParams);
     if (postError) {
       return {
-        content: [{ type: 'text', text: `# ❌ Validation Error\n\n${postError}` }],
+        content: [{ type: 'text', text: `# ❌ Validation Error — Fix & Retry\n\n${postError}` }],
         isError: true,
       };
     }
@@ -288,10 +314,10 @@ export function getRegisteredToolNames(): string[] {
 }
 
 /**
- * Check if a tool is registered
+ * Check if a tool is registered (including aliases)
  */
 export function isToolRegistered(name: string): boolean {
-  return name in toolRegistry;
+  return name in toolRegistry || name in TOOL_ALIASES;
 }
 
 /**

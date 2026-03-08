@@ -174,8 +174,16 @@ export const SCRAPER = {
   MAX_URLS: 50,
   RETRY_COUNT: 3,
   RETRY_DELAYS: [2000, 4000, 8000] as const,
-  EXTRACTION_SUFFIX: 'Try to answer this information as comprehensive as possible while keeping info density super high without adding unnecessary words but satisfy the scope defined by previous instructions even more.',
+  EXTRACTION_PREFIX: 'MUST DO RULES: Use SOURCE only (never hallucinate). Be concise but comprehensive with maximum information density. Choose format by content: markdown tables for structured/comparative/multi-item data, nested lists for hierarchical/process/causal data (max depth 5). If coverage needs breadth, you may use up to 50 markdown tables/sections (token budget permitting). No preamble, no filler, no meta-commentary.',
+  EXTRACTION_SUFFIX: 'MUST DO: Preserve exact numbers, units, URLs, and code identifiers. Cover every requested target; remove repetition; if evidence is missing, state "Not found in SOURCE".',
 } as const;
+
+// Research Compression Prefix/Suffix
+// ============================================================================
+export const RESEARCH_PROMPTS = {
+  SUFFIX: `MUST DO RULES: Do not restate the question. Answer each numbered sub-question directly. Use markdown tables for structured comparisons and nested lists (max depth 5) for hierarchies. Be concise yet comprehensive; remove repetition; mark missing evidence explicitly.`,
+};
+// ============================================================================
 
 // ============================================================================
 // Reddit Configuration

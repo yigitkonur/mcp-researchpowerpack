@@ -199,13 +199,13 @@ export class RedditClient {
   async getPost(url: string, maxComments = 100): Promise<PostResult> {
     const parsed = this.parseUrl(url);
     if (!parsed) {
-      throw new Error(`Invalid Reddit URL format: ${url}`);
+      throw new Error(`Invalid Reddit URL format: "${url}". Expected format: https://www.reddit.com/r/subreddit/comments/id/title/ — check for typos or missing path segments, fix the URL, and retry.`);
     }
 
     // Auth - returns null on failure
     const token = await this.auth();
     if (!token) {
-      throw new Error('Reddit authentication failed - check credentials');
+      throw new Error('Reddit API authentication failed. Verify REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET are correct. Get credentials at https://www.reddit.com/prefs/apps (select "script" type). Workaround: use scrape_pages(urls=[...], use_llm=true) to scrape Reddit pages directly without API credentials.');
     }
 
     const limit = Math.min(maxComments, 500);
@@ -233,7 +233,7 @@ export class RedditClient {
 
         // 404 - Post doesn't exist
         if (res.status === 404) {
-          throw new Error(`Post not found: ${url}`);
+          throw new Error(`Reddit post not found (404): "${url}". The post may have been deleted, made private, or the URL is wrong. Remove this URL from your list and retry with the remaining URLs.`);
         }
 
         // Other errors
@@ -247,7 +247,7 @@ export class RedditClient {
             continue;
           }
 
-          throw new Error(`Reddit API error: ${res.status}`);
+          throw new Error(`Reddit API returned HTTP ${res.status} for "${url}". This may be temporary — the tool retried but failed. Use scrape_pages(urls=["${url}"], use_llm=true) as a direct HTTP fallback.`);
         }
 
         // Parse response safely
@@ -255,14 +255,14 @@ export class RedditClient {
         try {
           data = await res.json() as [any, any];
         } catch (parseError) {
-          throw new Error('Failed to parse Reddit API response');
+          throw new Error('Reddit API returned unparseable JSON. This is a temporary Reddit server issue — retry in a few seconds, or use scrape_pages as a direct HTTP fallback to get the content.');
         }
 
         const [postListing, commentListing] = data;
         const p = postListing?.data?.children?.[0]?.data;
 
         if (!p) {
-          throw new Error(`Post data not found in response: ${url}`);
+          throw new Error(`Reddit API returned empty/unexpected data for "${url}" — this happens with crossposts, galleries, or special post types. Remove this URL and retry, or use scrape_pages as a fallback.`);
         }
 
         const post: Post = {
@@ -300,7 +300,7 @@ export class RedditClient {
     }
 
     // All retries exhausted
-    throw new Error(lastError?.message || 'Failed to fetch Reddit post after retries');
+    throw new Error(lastError?.message || `All retry attempts exhausted for "${url}". Use scrape_pages(urls=["${url}"], use_llm=true) as a direct HTTP fallback.`);
   }
 
   private formatBody(p: any): string {
@@ -357,14 +357,14 @@ export class RedditClient {
     fetchComments = true,
     onBatchComplete?: (batchNum: number, totalBatches: number, processed: number) => void
   ): Promise<BatchPostResult> {
-    const totalBatches = Math.ceil(urls.length / REDDIT.BATCH_SIZE);
     const allResults = new Map<string, PostResult | Error>();
     let rateLimitHits = 0;
 
     const allocation = calculateCommentAllocation(urls.length);
-    const commentsPerPost = fetchComments ? (maxCommentsOverride || allocation.perPostCapped) : 0;
+    const initialPerPost = fetchComments ? (maxCommentsOverride || allocation.perPostCapped) : 0;
+    const totalBatches = Math.ceil(urls.length / REDDIT.BATCH_SIZE);
 
-    mcpLog('info', `Fetching ${urls.length} posts in ${totalBatches} batch(es), ${commentsPerPost} comments/post`, 'reddit');
+    mcpLog('info', `Phase 1: Fetching ${urls.length} posts in ${totalBatches} batch(es), ${initialPerPost} comments/post`, 'reddit');
 
     for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
       const startIdx = batchNum * REDDIT.BATCH_SIZE;
@@ -375,7 +375,7 @@ export class RedditClient {
       // Limit to 5 concurrent Reddit API calls within each batch
       const batchResults = await pMapSettled(
         batchUrls,
-        url => this.getPost(url, commentsPerPost),
+        url => this.getPost(url, initialPerPost),
         5
       );
 
@@ -404,6 +404,51 @@ export class RedditClient {
       // Small delay between batches
       if (batchNum < totalBatches - 1) {
         await sleep(500);
+      }
+    }
+
+    // ── Phase 2: Redistribute surplus to truncated posts ──
+    if (fetchComments && !maxCommentsOverride) {
+      let surplus = 0;
+      const truncatedUrls: string[] = [];
+
+      for (const [url, result] of allResults) {
+        if (result instanceof Error) continue;
+        const used = result.comments.length;
+        if (used < initialPerPost) {
+          surplus += initialPerPost - used;
+        } else if (result.post.commentCount > used) {
+          truncatedUrls.push(url);
+        }
+      }
+
+      if (surplus > 0 && truncatedUrls.length > 0) {
+        const extraPerPost = Math.min(
+          Math.floor(surplus / truncatedUrls.length),
+          REDDIT.MAX_COMMENTS_PER_POST
+        );
+        const newLimit = Math.min(initialPerPost + extraPerPost, REDDIT.MAX_COMMENTS_PER_POST);
+        allocation.redistributed = true;
+        mcpLog('info', `Phase 2: Redistributing ${surplus} surplus comments to ${truncatedUrls.length} truncated post(s) (${initialPerPost} → ${newLimit}/post)`, 'reddit');
+
+        const refetchResults = await pMapSettled(
+          truncatedUrls,
+          url => this.getPost(url, newLimit),
+          5
+        );
+
+        for (let i = 0; i < refetchResults.length; i++) {
+          const result = refetchResults[i];
+          const url = truncatedUrls[i] || '';
+          if (result.status === 'fulfilled') {
+            allResults.set(url, result.value);
+          } else {
+            const errorMsg = result.reason?.message || String(result.reason);
+            if (errorMsg.includes('429') || errorMsg.includes('rate')) rateLimitHits++;
+            // Keep original result on re-fetch failure
+          }
+        }
+        mcpLog('info', `Phase 2 complete: re-fetched ${truncatedUrls.length} post(s)`, 'reddit');
       }
     }
 

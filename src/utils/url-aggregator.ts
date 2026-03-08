@@ -271,29 +271,36 @@ export function generateEnhancedOutput(
   // Next Steps - actionable follow-up commands
   lines.push('---');
   lines.push('');
-  lines.push('### ➡️ Next Steps');
+  lines.push('### ➡️ Next Steps (DO NOT SKIP — your research is incomplete without these)');
   lines.push('');
 
-  // Generate URL list for scrape_links command
+  // Generate URL list for scrape_pages command
   const topUrls = rankedUrls.slice(0, Math.min(5, rankedUrls.length));
   if (topUrls.length > 0) {
     const urlList = topUrls.map(u => `"${u.url}"`).join(', ');
-    lines.push(`**Scrape top consensus URLs for full content:**`);
+    lines.push(`**1. IMMEDIATE — Fetch raw content from top consensus URLs:**`);
     lines.push('```');
-    lines.push(`scrape_links(urls=[${urlList}], use_llm=true, what_to_extract="Extract key insights, recommendations, and actionable information")`);
+    lines.push(`scrape_pages(urls=[${urlList}], use_llm=true, what_to_extract="Extract key insights, recommendations, and actionable information")`);
     lines.push('```');
     lines.push('');
   }
 
   // Reddit follow-up
-  lines.push(`**Get community perspective from Reddit:**`);
+  lines.push(`**2. VERIFY — Cross-check with community opinions on Reddit:**`);
   lines.push('```');
   lines.push(`search_reddit(queries=["${allKeywords[0] || 'topic'} reddit", "${allKeywords[0] || 'topic'} recommendations", "${allKeywords[0] || 'topic'} best practices"])`);
   lines.push('```');
   lines.push('');
 
   // Deep research follow-up
-  lines.push(`**Synthesize findings with deep research:**`);
+  lines.push(`**3. DEEP DIVE — Scrape external links found in top pages:**`);
+  lines.push('```');
+  lines.push(`scrape_pages(urls=[<urls from step 1 results>], use_llm=true, what_to_extract="Extract external links, citations, and referenced resources")`);
+  lines.push('```');
+  lines.push('');
+
+  // Synthesis follow-up
+  lines.push(`**4. SYNTHESIZE — Only after steps 1-3 are complete:**`);
   lines.push('```');
   lines.push(`deep_research(questions=[{question: "Based on web search results, what are the key findings, best practices, and recommendations for [topic]?"}])`);
   lines.push('```');
@@ -651,16 +658,16 @@ export function generateRedditEnhancedOutput(
   // Next Steps - actionable follow-up commands
   lines.push('---');
   lines.push('');
-  lines.push('### ➡️ Next Steps');
+  lines.push('### ➡️ Next Steps (DO NOT SKIP — your research is incomplete without these)');
   lines.push('');
 
-  // Generate URL list for get_reddit_post command
+  // Generate URL list for fetch_reddit command
   const topUrls = rankedUrls.slice(0, Math.min(10, rankedUrls.length));
   if (topUrls.length >= 2) {
     const urlList = topUrls.map(u => `"${u.url}"`).join(', ');
-    lines.push(`**Fetch full posts with comments:**`);
+    lines.push(`**1. IMMEDIATE — Fetch raw comments from top posts:**`);
     lines.push('```');
-    lines.push(`get_reddit_post(urls=[${urlList}], fetch_comments=true)`);
+    lines.push(`fetch_reddit(urls=[${urlList}], fetch_comments=true)`);
     lines.push('```');
     lines.push('');
   }
@@ -668,15 +675,22 @@ export function generateRedditEnhancedOutput(
   // Suggest LLM extraction if there are consensus posts
   if (consensusUrls.length > 0) {
     const consensusUrlList = consensusUrls.slice(0, 5).map(u => `"${u.url}"`).join(', ');
-    lines.push(`**Extract insights with AI (recommended for consensus posts):**`);
+    lines.push(`**2. VERIFY — Cross-check consensus posts with AI extraction:**`);
     lines.push('```');
-    lines.push(`get_reddit_post(urls=[${consensusUrlList}], fetch_comments=true, use_llm=true, what_to_extract="Extract key recommendations, consensus opinions, and practical advice")`);
+    lines.push(`fetch_reddit(urls=[${consensusUrlList}], fetch_comments=true, use_llm=true, what_to_extract="Extract key recommendations, consensus opinions, and practical advice")`);
     lines.push('```');
     lines.push('');
   }
 
+  // Deep dive into external links
+  lines.push(`**3. DEEP DIVE — Scrape external links mentioned in top posts:**`);
+  lines.push('```');
+  lines.push(`scrape_pages(urls=[<external links from step 1 results>], use_llm=true, what_to_extract="Extract key insights and recommendations")`);
+  lines.push('```');
+  lines.push('');
+
   // Deep research follow-up
-  lines.push(`**Synthesize findings with deep research:**`);
+  lines.push(`**4. SYNTHESIZE — Only after steps 1-3 are complete:**`);
   lines.push('```');
   lines.push(`deep_research(questions=[{question: "Based on these Reddit discussions about [topic], what are the main recommendations, common issues, and best practices?"}])`);
   lines.push('```');

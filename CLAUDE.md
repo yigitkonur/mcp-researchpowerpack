@@ -130,3 +130,15 @@ src/
 ## CI/CD
 
 GitHub Actions (`.github/workflows/npmrelease.yml`): pushes to main auto-publish to npm with OIDC provenance. Auto-bumps patch version if already published. Ignores markdown/docs-only changes. `[skip ci]` in commit message skips build. Manual trigger supports patch/minor/major bump.
+
+For this project, use CRASH MCP helps significantly for this specific task:
+
+Where CRASH helped:
+- Systematic analysis: Forced me to break down the issue methodically
+- Solution exploration: Explored multiple approaches before settling on the best one
+- Planning validation: Each step built on the previous one logically
+
+The key difference:
+CRASH forced me to be more thorough in the analysis phase. Without it, I might have rushed to implement the first solution rather than exploring cleaner approaches.
+
+Verdict: CRASH adds value for complex problems requiring systematic analysis of multiple solution paths. For simpler tasks, internal planning is sufficient and faster. Use this effectively to think step by step!

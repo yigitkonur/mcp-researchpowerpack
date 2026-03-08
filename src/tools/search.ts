@@ -133,13 +133,16 @@ export async function handleWebSearch(
     mcpLog('info', `Search completed: ${totalResults} results, ${aggregation.totalUniqueUrls} unique URLs, ${consensusUrls.length} consensus`, 'search');
 
     // Add Next Steps section
+    const topConsensusUrls = consensusUrls.slice(0, 5).map(u => `"${u.url}"`).join(', ');
     const nextSteps = [
-      consensusUrls.length > 0 ? `Scrape top consensus URLs: scrape_links(urls=[${consensusUrls.slice(0, 3).map(u => `"${u.url}"`).join(', ')}], use_llm=true)` : null,
-      'Get Reddit perspective: search_reddit(queries=[...related terms...])',
-      'Deep research: deep_research(questions=[{question: "Based on search results..."}])',
-    ].filter(Boolean) as string[];
+      consensusUrls.length > 0
+        ? `1. SCRAPE NOW — get full content from top consensus URLs: scrape_pages(urls=[${topConsensusUrls}], use_llm=true, what_to_extract="Extract key insights, recommendations, pricing, and actionable information")`
+        : `1. SCRAPE NOW — get full content from top results: scrape_pages(urls=[...top URLs above...], use_llm=true)`,
+      '2. GET REDDIT PERSPECTIVE — search_reddit(queries=[...related terms from results above...])',
+      '3. SYNTHESIZE — deep_research(questions=[{question: "Based on search results, what are the key findings and recommendations for [topic]?"}])',
+    ];
 
-    markdown += '\n\n---\n\n**Next Steps:**\n';
+    markdown += '\n\n---\n\n**Next Steps (run these NOW):**\n';
     nextSteps.forEach(step => { markdown += `→ ${step}\n`; });
 
     markdown += `\n---\n*${formatDuration(executionTime)} | ${aggregation.totalUniqueUrls} unique URLs | ${consensusUrls.length} consensus*`;
@@ -158,17 +161,17 @@ export async function handleWebSearch(
     const structuredError = classifyError(error);
     const executionTime = Date.now() - startTime;
 
-    mcpLog('error', `web_search: ${structuredError.message}`, 'search');
+    mcpLog('error', `search_google: ${structuredError.message}`, 'search');
 
     const errorContent = formatError({
       code: structuredError.code,
       message: structuredError.message,
       retryable: structuredError.retryable,
-      toolName: 'web_search',
-      howToFix: ['Verify SERPER_API_KEY is set correctly'],
+      toolName: 'search_google',
+      howToFix: ['Verify SERPER_API_KEY is set correctly — get one free at https://serper.dev'],
       alternatives: [
-        'search_reddit(queries=[...]) for Reddit-specific results',
-        'deep_research(questions=[...]) for AI-synthesized research',
+        'search_reddit(queries=[...]) for Reddit-specific community results',
+        'deep_research(questions=[...]) for AI-synthesized research without needing a search key',
       ],
     });
 

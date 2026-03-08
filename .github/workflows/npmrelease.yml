@@ -27,16 +27,19 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
+          cache: 'pnpm'
 
-      - run: npm install -g npm@latest
+      - run: pnpm install --frozen-lockfile
 
-      - run: npm ci
-
-      - run: npm run build
+      - run: pnpm build
 
       - name: Check version on npm
         id: check
@@ -44,7 +47,7 @@ jobs:
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VER=$(node -p "require('./package.json').version")
           echo "name=$PKG_NAME version=$PKG_VER"
-          if npm view "${PKG_NAME}@${PKG_VER}" version --registry https://registry.npmjs.org 2>/dev/null; then
+          if pnpm view "${PKG_NAME}@${PKG_VER}" version --registry https://registry.npmjs.org 2>/dev/null; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Version ${PKG_VER} already exists on npm"
           else
@@ -59,7 +62,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           BUMP="${{ inputs.bump || 'patch' }}"
-          npm version "$BUMP" -m "chore: bump version to %s [skip ci]"
+          pnpm version "$BUMP" -m "chore: bump version to %s [skip ci]"
           NEW_VER=$(node -p "require('./package.json').version")
           echo "Bumped to ${NEW_VER}"
           git push && git push --tags
@@ -67,4 +70,4 @@ jobs:
 
       - name: Publish to npm (OIDC provenance)
         if: steps.check.outputs.exists == 'false' || steps.bump.outputs.bumped == 'true'
-        run: npm publish --access public --provenance
+        run: pnpm publish --access public --provenance --no-git-checks

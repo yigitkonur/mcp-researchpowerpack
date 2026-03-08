@@ -6,8 +6,9 @@
 import type { DeepResearchParams } from '../schemas/deep-research.js';
 import { ResearchClient, type ResearchResponse } from '../clients/research.js';
 import { FileAttachmentService } from '../services/file-attachment.js';
-import { RESEARCH } from '../config/index.js';
+import { RESEARCH, RESEARCH_PROMPTS } from '../config/index.js';
 import { classifyError } from '../utils/errors.js';
+import { getToolConfig } from '../config/loader.js';
 import { pMap } from '../utils/concurrency.js';
 import {
   mcpLog,
@@ -34,20 +35,27 @@ interface QuestionResult {
 
 const SYSTEM_PROMPT = `You are an expert research consultant. Provide evidence-based, multi-perspective analysis.
 
-METHODOLOGY:
+MUST DO RULES:
 - SOURCE DIVERSITY: Official docs, papers, blogs, case studies
-- CURRENT + HISTORICAL: Latest developments AND context
-- MULTIPLE PERSPECTIVES: Different approaches with pros/cons
-- EVIDENCE-BASED: Claims backed by citations
+- HIGH INFO DENSITY: Every sentence must contain a fact, data point, or actionable insight — no filler
+- EVIDENCE-BASED: Back claims with citations and sources
+- CONCISE YET COMPREHENSIVE: Cover all angles without padding
 
-FORMAT (high info density):
-- CURRENT STATE: Status quo, what we know
-- KEY INSIGHTS: Most important findings with evidence
-- TRADE-OFFS: Competing priorities honestly analyzed
-- PRACTICAL IMPLICATIONS: Real-world application
-- WHAT'S CHANGING: Recent developments
+FORMAT (use markdown tables for structured/comparative data; nested lists for hierarchical/process/causal explanations):
+- CURRENT STATE: Status quo with key metrics
+- KEY INSIGHTS: Top findings with evidence
+- TRADE-OFFS: Competing approaches honestly analyzed
+- PRACTICAL IMPLICATIONS: Real-world application steps
+- WHAT'S CHANGING: Recent developments and trends`;
 
-Be dense with insights, light on filler. Use examples and citations.`;
+function getResearchSuffix(): string {
+  const config = getToolConfig('deep_research');
+  return config?.limits?.compression_suffix as string || RESEARCH_PROMPTS.SUFFIX;
+}
+
+function wrapQuestionWithCompression(question: string): string {
+  return question + getResearchSuffix();
+}
 
 /**
  * Handle deep research request
@@ -64,20 +72,28 @@ export async function handleDeepResearch(
     return {
       content: formatError({
         code: 'MIN_QUESTIONS',
-        message: `Minimum ${MIN_QUESTIONS} research question(s) required. Received: ${questions.length}`,
+        message: `Minimum ${MIN_QUESTIONS} research question(s) required. Received: ${questions.length}. Add at least one question and retry immediately.`,
         toolName: 'deep_research',
-        howToFix: ['Add at least one question with detailed context'],
+        howToFix: [
+          'Add at least one question with GOAL, WHY, KNOWN, and SPECIFIC SUB-QUESTIONS',
+          'Include file attachments for code-related questions (bugs, perf, refactoring)',
+        ],
+        alternatives: [
+          'search_google(keywords=[...]) — quick web search without AI synthesis',
+          'search_reddit(queries=[...]) — community perspective without API key',
+        ],
       }),
       structuredContent: { error: true, message: `Minimum ${MIN_QUESTIONS} question(s) required` },
     };
   }
   if (questions.length > MAX_QUESTIONS) {
+    const excess = questions.length - MAX_QUESTIONS;
     return {
       content: formatError({
         code: 'MAX_QUESTIONS',
-        message: `Maximum ${MAX_QUESTIONS} research questions allowed. Received: ${questions.length}`,
+        message: `Maximum ${MAX_QUESTIONS} research questions allowed. Received: ${questions.length}. Remove ${excess} question(s) and retry.`,
         toolName: 'deep_research',
-        howToFix: [`Remove ${questions.length - MAX_QUESTIONS} question(s)`],
+        howToFix: [`Remove ${excess} question(s) — prioritize the most impactful questions`],
       }),
       structuredContent: { error: true, message: `Maximum ${MAX_QUESTIONS} questions allowed` },
     };
@@ -98,7 +114,15 @@ export async function handleDeepResearch(
         code: 'CLIENT_INIT_FAILED',
         message: `Failed to initialize research client: ${err.message}`,
         toolName: 'deep_research',
-        howToFix: ['Check OPENROUTER_API_KEY is set'],
+        howToFix: [
+          'Set OPENROUTER_API_KEY — get one free at https://openrouter.ai',
+          'Add the key to your MCP server environment variables',
+        ],
+        alternatives: [
+          'search_google(keywords=[...]) — web search without OpenRouter',
+          'search_reddit(queries=[...]) — community research without OpenRouter',
+          'scrape_pages(urls=[...]) — scrape specific pages (requires SCRAPER_API_KEY)',
+        ],
       }),
       structuredContent: { error: true, message: `Failed to initialize: ${err.message}` },
     };
@@ -121,6 +145,9 @@ export async function handleDeepResearch(
           mcpLog('warning', `Failed to process attachments for question ${index + 1}`, 'research');
         }
       }
+
+      // Append compression suffix for info density constraints
+      enhancedQuestion = wrapQuestionWithCompression(enhancedQuestion);
 
       // ResearchClient.research() returns error in response instead of throwing
       const response = await client.research({
@@ -199,9 +226,10 @@ export async function handleDeepResearch(
   }
 
   const nextSteps = [
-    successful.length > 0 ? 'Scrape mentioned sources: scrape_links(urls=[...extracted URLs...], use_llm=true)' : null,
-    failed.length > 0 ? 'Retry failed questions with more specific context' : null,
-    'Search Reddit for community perspective: search_reddit(queries=[...related topics...])',
+    successful.length > 0 ? '1. VERIFY FINDINGS — scrape_pages(urls=[...URLs cited in research above...], use_llm=true, what_to_extract="Verify and expand on key claims")' : null,
+    successful.length > 0 ? '2. GET COMMUNITY PERSPECTIVE — search_reddit(queries=[...key topics from research...])'  : null,
+    failed.length > 0 ? '3. RETRY failed questions with more specific context and file attachments' : null,
+    '4. ITERATE — run deep_research again with refined questions based on findings above',
   ].filter(Boolean) as string[];
 
   const formattedContent = formatSuccess({

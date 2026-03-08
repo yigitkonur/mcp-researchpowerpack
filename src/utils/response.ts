@@ -48,8 +48,10 @@ export function formatSuccess(opts: SuccessOptions): string {
   if (opts.nextSteps?.length) {
     parts.push('');
     parts.push('---');
-    parts.push('**Next Steps:**');
-    opts.nextSteps.forEach(step => parts.push(`→ ${step}`));
+    parts.push('**Next Steps (DO NOT SKIP — your research is incomplete without these):**');
+    opts.nextSteps.forEach((step, i) => parts.push(`${i + 1}. ${step}`));
+    parts.push('');
+    parts.push('> **Research quality check:** Before moving on, ask yourself — have you scraped the key URLs? Verified claims with independent sources? Checked community opinions? If not, your research has gaps. Use the steps above to fill them.');
   }
 
   // Metadata footer
@@ -97,21 +99,25 @@ export function formatError(opts: ErrorOptions): string {
   // Retryable hint
   if (opts.retryable) {
     parts.push('');
-    parts.push('*This error is retryable. Wait a moment and try again.*');
+    parts.push('*This error is transient — retry the tool call immediately with the same parameters.*');
   }
 
   // How to fix
   if (opts.howToFix?.length) {
     parts.push('');
-    parts.push('**How to Fix:**');
+    parts.push('**FIX THIS NOW:**');
     opts.howToFix.forEach((step, i) => parts.push(`${i + 1}. ${step}`));
+    parts.push('');
+    parts.push('**Then call this tool again immediately with the corrected parameters.**');
   }
 
   // Alternatives
   if (opts.alternatives?.length) {
     parts.push('');
-    parts.push('**Alternatives:**');
-    opts.alternatives.forEach(alt => parts.push(`• ${alt}`));
+    parts.push('**MEANWHILE — keep researching with these tools (do ALL that apply):**');
+    opts.alternatives.forEach((alt, i) => parts.push(`${i + 1}. ${alt}`));
+    parts.push('');
+    parts.push('> **Do not stop your research.** Use the alternatives above while this tool is unavailable.');
   }
 
   return parts.join('\n');

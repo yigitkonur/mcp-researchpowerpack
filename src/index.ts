@@ -83,7 +83,7 @@ if (disabledTools.length > 0) {
   console.error(`⚠️ Disabled tools (missing ENV): ${disabledTools.join(', ')}`);
 }
 if (capabilities.scraping && !capabilities.llmExtraction) {
-  console.error(`ℹ️ scrape_links: AI extraction (use_llm) disabled - set OPENROUTER_API_KEY to enable`);
+  console.error(`ℹ️ scrape_pages: AI extraction (use_llm) disabled - set OPENROUTER_API_KEY to enable`);
 }
 
 // ============================================================================

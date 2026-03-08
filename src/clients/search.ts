@@ -69,7 +69,7 @@ export class SearchClient {
     this.apiKey = apiKey || env.SEARCH_API_KEY || '';
 
     if (!this.apiKey) {
-      throw new Error('SERPER_API_KEY is required for search functionality');
+      throw new Error('SERPER_API_KEY is required for search functionality — get one free at https://serper.dev (2,500 free queries/month). Alternatively use deep_research() which has built-in web search via OpenRouter.');
     }
   }
 
@@ -223,7 +223,7 @@ export class SearchClient {
       return [];
     }
 
-    let q = REDDIT_SITE_REGEX.test(query) ? query : `${query} site:reddit.com`;
+    let q = query.replace(REDDIT_SITE_REGEX, '').trim() + ' site:reddit.com';
 
     if (dateAfter) {
       q += ` after:${dateAfter}`;

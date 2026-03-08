@@ -51,7 +51,7 @@ export class ScraperClient {
     this.apiKey = apiKey || env.SCRAPER_API_KEY;
 
     if (!this.apiKey) {
-      throw new Error('SCRAPEDO_API_KEY is required');
+      throw new Error('SCRAPEDO_API_KEY is required — get one free at https://scrape.do (sign up takes 30 seconds). Alternatively use deep_research() which has built-in web access, or search_google() for URLs only.');
     }
   }
 

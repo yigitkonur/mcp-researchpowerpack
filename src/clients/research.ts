@@ -77,7 +77,7 @@ export class ResearchClient {
 
   constructor() {
     if (!RESEARCH.API_KEY) {
-      throw new Error('OPENROUTER_API_KEY is required for research');
+      throw new Error('OPENROUTER_API_KEY is required for research — get one free at https://openrouter.ai (free tier available). Alternatively use search_google() + scrape_pages() for manual research workflows.');
     }
 
     this.client = new OpenAI({

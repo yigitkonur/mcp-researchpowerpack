@@ -18,6 +18,7 @@ interface ProcessingConfig {
   use_llm: boolean;
   what_to_extract: string | undefined;
   max_tokens?: number;
+  model?: string;
 }
 
 interface LLMResult {
@@ -43,6 +44,20 @@ const RETRYABLE_LLM_ERROR_CODES = new Set([
 ]);
 
 let llmClient: OpenAI | null = null;
+
+/**
+ * Check if a model supports Grok-style search_parameters (xAI models)
+ */
+function isGrokStyleModel(model: string): boolean {
+  return model.startsWith('x-ai/');
+}
+
+/**
+ * Check if a model supports Gemini-style google_search tool
+ */
+function isGeminiStyleModel(model: string): boolean {
+  return model.startsWith('google/gemini');
+}
 
 export function createLLMProcessor(): OpenAI | null {
   if (!getCapabilities().llmExtraction) return null;
@@ -149,18 +164,39 @@ export async function processContentWithLLM(
     : content;
 
   const prompt = config.what_to_extract
-    ? `Extract and clean the following content. Focus on: ${config.what_to_extract}\n\nContent:\n${truncatedContent}`
-    : `Clean and extract the main content from the following text, removing navigation, ads, and irrelevant elements:\n\n${truncatedContent}`;
+    ? `TARGETS:\n${config.what_to_extract}\n\nSOURCE:\n${truncatedContent}`
+    : `TARGETS:\nExtract main content and key information; ignore navigation, ads, and boilerplate.\n\nSOURCE:\n${truncatedContent}`;
+
+  const systemPrompt = 'MUST DO RULES: Extract only from SOURCE (never hallucinate). Be concise yet comprehensive with high information density. Use markdown tables for structured/comparative/multi-item data; use nested lists for hierarchical/process/causal data (max depth 5). You may use up to 50 markdown tables/sections when broad coverage is required and token budget allows. No preamble, filler, or meta-commentary.';
+
+  const resolvedModel = config.model || LLM_EXTRACTION.MODEL;
 
   // Build request body
   const requestBody: Record<string, unknown> = {
-    model: LLM_EXTRACTION.MODEL,
-    messages: [{ role: 'user', content: prompt }],
+    model: resolvedModel,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: prompt }
+    ],
     max_tokens: config.max_tokens || LLM_EXTRACTION.MAX_TOKENS,
   };
 
   if (LLM_EXTRACTION.ENABLE_REASONING) {
     requestBody.reasoning = { enabled: true };
+  }
+
+  // Enable web search for models that support it
+  if (isGrokStyleModel(resolvedModel)) {
+    requestBody.search_parameters = {
+      mode: 'on',
+      max_search_results: 10,
+      return_citations: true,
+      sources: [{ type: 'web' }],
+    };
+    mcpLog('info', `Web search enabled for Grok model: ${resolvedModel}`, 'llm');
+  } else if (isGeminiStyleModel(resolvedModel)) {
+    requestBody.tools = [{ type: 'google_search', googleSearch: {} }];
+    mcpLog('info', `Google search enabled for Gemini model: ${resolvedModel}`, 'llm');
   }
 
   let lastError: StructuredError | undefined;
@@ -169,7 +205,7 @@ export async function processContentWithLLM(
   for (let attempt = 0; attempt <= LLM_RETRY_CONFIG.maxRetries; attempt++) {
     try {
       if (attempt === 0) {
-        mcpLog('info', `Starting extraction with ${LLM_EXTRACTION.MODEL}`, 'llm');
+        mcpLog('info', `Starting extraction with ${resolvedModel}`, 'llm');
       } else {
         mcpLog('warning', `Retry attempt ${attempt}/${LLM_RETRY_CONFIG.maxRetries}`, 'llm');
       }
