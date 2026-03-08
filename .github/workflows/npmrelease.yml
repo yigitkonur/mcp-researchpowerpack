@@ -71,3 +71,5 @@ jobs:
       - name: Publish to npm (OIDC provenance)
         if: steps.check.outputs.exists == 'false' || steps.bump.outputs.bumped == 'true'
         run: pnpm publish --access public --provenance --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

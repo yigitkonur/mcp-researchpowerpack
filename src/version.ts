@@ -15,7 +15,7 @@ import { dirname, join } from 'path';
 
 // Defaults used when running in Workers or if package.json cannot be loaded
 let packageJson: { version: string; name: string; description: string } = {
-  version: '3.7.2',
+  version: '3.8.0',
   name: 'mcp-researchpowerpack',
   description: 'Research Powerpack MCP Server',
 };

@@ -39,16 +39,16 @@ Server starts with any configuration — tools are silently disabled if their AP
 **API keys (each enables a capability):**
 | Variable | Enables | Free Tier |
 |----------|---------|-----------|
-| `SERPER_API_KEY` | `web_search`, `search_reddit` | 2,500 queries/mo |
-| `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` | `get_reddit_post` | unlimited |
-| `SCRAPEDO_API_KEY` | `scrape_links` | 1,000 credits/mo |
-| `OPENROUTER_API_KEY` | `deep_research`, `use_llm` in scrape_links | pay-as-you-go |
+| `SERPER_API_KEY` | `search_google`, `search_reddit` | 2,500 queries/mo |
+| `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` | `fetch_reddit` | unlimited |
+| `SCRAPEDO_API_KEY` | `scrape_pages` | 1,000 credits/mo |
+| `OPENROUTER_API_KEY` | `deep_research`, `use_llm` in scrape_pages | pay-as-you-go |
 
-Note: `search_reddit` uses Google Serper (`site:reddit.com`), NOT the Reddit API. Only `get_reddit_post` uses Reddit OAuth credentials.
+Note: `search_reddit` uses Google Serper (`site:reddit.com`), NOT the Reddit API. Only `fetch_reddit` uses Reddit OAuth credentials.
 
 **Optional tuning:**
-- `RESEARCH_MODEL` — deep research primary model (default: `x-ai/grok-4-fast`)
-- `RESEARCH_FALLBACK_MODEL` — fallback when primary fails (default: `google/gemini-2.5-flash`)
+- `RESEARCH_MODEL` — deep research primary model (default: `x-ai/grok-4.1-fast`)
+- `RESEARCH_FALLBACK_MODEL` — fallback when primary fails (default: `openai/gpt-oss-120b:nitro`)
 - `LLM_EXTRACTION_MODEL` — extraction model (default: `openai/gpt-oss-120b:nitro`)
 - `API_TIMEOUT_MS` — request timeout (default: 1,800,000 / 30min)
 - `DEFAULT_REASONING_EFFORT` — `low|medium|high` (default: `high`)
@@ -63,7 +63,7 @@ Note: `search_reddit` uses Google Serper (`site:reddit.com`), NOT the Reddit API
 src/
 ├── index.ts                    # STDIO + HTTP server entry point, graceful shutdown, stdin disconnect detection
 ├── worker.ts                   # Cloudflare Workers entry point (excluded from tsconfig.json, compiled by Wrangler)
-├── version.ts                  # Version string (hardcoded fallback 3.6.9 for Workers where package.json unavailable)
+├── version.ts                  # Version string (hardcoded fallback 3.8.0 for Workers where package.json unavailable)
 ├── config/
 │   ├── index.ts                # Env parsing, capability detection, lazy Proxy config objects with resetEnvCache()
 │   ├── loader.ts               # YAML tool config loader (readFileSync — incompatible with Workers runtime)
@@ -77,9 +77,9 @@ src/
 ├── tools/
 │   ├── definitions.ts          # Tool metadata generated from YAML
 │   ├── registry.ts             # Central handler registry & execution pipeline
-│   ├── search.ts               # web_search handler (3-100 parallel keywords)
-│   ├── reddit.ts               # search_reddit (10-50 queries via Serper) + get_reddit_post (via Reddit API)
-│   ├── scrape.ts               # scrape_links handler (1-50 URLs, 10 concurrent, batches of 30)
+│   ├── search.ts               # search_google handler (3-100 parallel keywords)
+│   ├── reddit.ts               # search_reddit (3-50 queries via Serper) + fetch_reddit (via Reddit API)
+│   ├── scrape.ts               # scrape_pages handler (1-50 URLs, 10 concurrent, batches of 30)
 │   ├── research.ts             # deep_research handler (1-10 questions, 32K token budget, file attachments)
 │   └── utils.ts                # Tool-specific utilities
 ├── schemas/                    # Zod input validation
@@ -103,7 +103,8 @@ src/
 - **Tool specs in YAML** (`config/yaml/tools.yaml`) — single source of truth for tool names, descriptions, and parameter specs. Copied into `dist/config/` during build. If you add new YAML files, they must be in this directory.
 - **Never-throw pattern** — server never crashes on tool failures. All errors go through `classifyError()` which categorizes as retryable (429, 5xx → exponential backoff) or non-retryable (→ user-friendly message with setup instructions).
 - **Capability-based degradation** — missing API keys disable specific tools with helpful setup instructions rather than failing.
-- **Bounded concurrency** — web_search: 8, search_reddit: 8, get_reddit_post: 5 (batches of 10), scrape_links: 10 (batches of 30) + 3 LLM extractions, deep_research: 3.
+- **Bounded concurrency** — search_google: 8, search_reddit: 8, fetch_reddit: 5 (batches of 10), scrape_pages: 10 (batches of 30) + 3 LLM extractions, deep_research: 3.
+- **Two allowed models** — `openai/gpt-oss-120b:nitro` (extraction default) and `x-ai/grok-4.1-fast` (research default with web search). scrape_pages model override restricted to these two via Zod enum.
 - **CTR-weighted URL ranking** — search results ranked by click-through rates with consensus detection across multiple queries.
 - **Smart Reddit comment allocation** — 1000 total budget, capped at 200/post: 5+ posts → budget/count each, 2 posts → 200 each (capped from 500).
 - **70/20/10 response format** — all tools return: 70% summary, 20% structured data, 10% actionable next steps.
@@ -131,14 +132,6 @@ src/
 
 GitHub Actions (`.github/workflows/npmrelease.yml`): pushes to main auto-publish to npm with OIDC provenance. Auto-bumps patch version if already published. Ignores markdown/docs-only changes. `[skip ci]` in commit message skips build. Manual trigger supports patch/minor/major bump.
 
-For this project, use CRASH MCP helps significantly for this specific task:
+## npm Publishing
 
-Where CRASH helped:
-- Systematic analysis: Forced me to break down the issue methodically
-- Solution exploration: Explored multiple approaches before settling on the best one
-- Planning validation: Each step built on the previous one logically
-
-The key difference:
-CRASH forced me to be more thorough in the analysis phase. Without it, I might have rushed to implement the first solution rather than exploring cleaner approaches.
-
-Verdict: CRASH adds value for complex problems requiring systematic analysis of multiple solution paths. For simpler tasks, internal planning is sufficient and faster. Use this effectively to think step by step!
+GitHub Actions CI with OIDC provenance. Workflow at `.github/workflows/npmrelease.yml`. Requires `NPM_TOKEN` secret in GitHub repo settings. Auto-bumps patch version on push to main if current version already exists on npm.

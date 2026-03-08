@@ -34,10 +34,11 @@ const scrapeLinksParamsShape = {
     .optional()
     .describe('Extraction targets/focus. Prefer compact, specific targets (pipe-separated works well), e.g. "pricing tiers|limits|auth flows with focus on free tier and rate limits". You may request output style: markdown tables or nested lists (max depth 5).'),
   model: z
-    .string()
-    .max(200, { message: 'scrape_pages: Model name too long (max 200 characters)' })
+    .enum(['openai/gpt-oss-120b:nitro', 'x-ai/grok-4.1-fast'], {
+      errorMap: () => ({ message: 'scrape_pages: model must be "openai/gpt-oss-120b:nitro" or "x-ai/grok-4.1-fast"' }),
+    })
     .optional()
-    .describe('Override the LLM extraction model for this request. Uses OpenRouter model IDs (e.g. "openai/gpt-4o", "anthropic/claude-sonnet-4", "google/gemini-2.5-flash"). Default: openai/gpt-oss-120b:nitro (configurable via LLM_EXTRACTION_MODEL env var).'),
+    .describe('Override the LLM extraction model for this request. Allowed: "openai/gpt-oss-120b:nitro" (default, best for extraction) or "x-ai/grok-4.1-fast" (adds web search). Default: openai/gpt-oss-120b:nitro.'),
 };
 
 export const scrapeLinksParamsSchema = z.object(scrapeLinksParamsShape);

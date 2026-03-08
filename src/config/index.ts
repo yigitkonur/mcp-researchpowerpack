@@ -99,8 +99,8 @@ function getResearch(): ResearchConfig {
   if (cachedResearch) return cachedResearch;
   cachedResearch = {
     BASE_URL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
-    MODEL: process.env.RESEARCH_MODEL || 'x-ai/grok-4-fast',
-    FALLBACK_MODEL: process.env.RESEARCH_FALLBACK_MODEL || 'google/gemini-2.5-flash',
+    MODEL: process.env.RESEARCH_MODEL || 'x-ai/grok-4.1-fast',
+    FALLBACK_MODEL: process.env.RESEARCH_FALLBACK_MODEL || 'openai/gpt-oss-120b:nitro',
     API_KEY: process.env.OPENROUTER_API_KEY || '',
     TIMEOUT_MS: safeParseInt(process.env.API_TIMEOUT_MS, 1800000, 1000, 3600000),
     REASONING_EFFORT: (process.env.DEFAULT_REASONING_EFFORT as 'low' | 'medium' | 'high') || 'high',

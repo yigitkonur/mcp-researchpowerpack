@@ -107,7 +107,7 @@ tools:
       timeout: "Timeout in seconds for each URL"
       use_llm: "Enable LLM extraction post-processing (default true). When enabled, strict MUST-DO formatting rules apply (concise+comprehensive, table/list routing). Set false for mostly raw cleaned content, lower latency/cost, or when LLM extraction is unavailable."
       what_to_extract: "Extraction targets/focus. Prefer compact, specific targets (pipe-separated works well), e.g. \"pricing tiers|limits|auth flows with focus on free tier and rate limits\". You may request output style: markdown tables or nested lists (max depth 5)."
-      model: "Override the LLM extraction model for this request. Uses OpenRouter model IDs (e.g. \"openai/gpt-4o\", \"anthropic/claude-sonnet-4\", \"google/gemini-2.5-flash\"). Default: openai/gpt-oss-120b:nitro (configurable via LLM_EXTRACTION_MODEL env var)."
+      model: "Override the LLM extraction model. Allowed: \"openai/gpt-oss-120b:nitro\" (default, best for extraction) or \"x-ai/grok-4.1-fast\" (adds web search)."
 
 
   - name: search_google

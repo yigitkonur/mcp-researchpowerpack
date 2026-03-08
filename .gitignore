@@ -19,6 +19,8 @@ dist/
 .env.development
 .env.production
 !.env.example
+mcp_servers.json
+jean.json
 
 # ============================================
 # IDE and editors
