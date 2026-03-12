@@ -129,4 +129,4 @@ src/
 
 ## CI/CD
 
-GitHub Actions (`.github/workflows/npmrelease.yml`): pushes to main auto-publish to npm with OIDC provenance. Auto-bumps patch version if already published. Ignores markdown/docs-only changes. `[skip ci]` in commit message skips build. Manual trigger supports patch/minor/major bump.
+GitHub Actions (`.github/workflows/npm-publish.yml`): pushes to main auto-publish to npm. Auto-bumps patch version if already published. Ignores markdown/docs-only changes. `[skip ci]` in commit message skips build. Manual trigger supports patch/minor/major bump.
