@@ -3,6 +3,8 @@
  * Ensures the server NEVER crashes and always returns structured responses
  */
 
+import { mcpLog } from './logger.js';
+
 // ============================================================================
 // Error Codes (MCP-compliant)
 // ============================================================================
@@ -468,20 +470,21 @@ export async function withStallProtection<T>(
       }, stallMs);
     });
 
+    let fnPromise: Promise<T> | undefined;
     try {
-      const result = await Promise.race([fn(controller.signal), stallPromise]);
+      fnPromise = fn(controller.signal);
+      const result = await Promise.race([fnPromise, stallPromise]);
       clearTimeout(stallTimer);
       return result;
     } catch (err) {
+      // Suppress unhandled rejection from the losing promise
+      // (e.g. fnPromise rejects after stallPromise wins the race)
+      fnPromise?.catch(() => {});
       clearTimeout(stallTimer);
       const isStall = err instanceof Error && (err as NodeJS.ErrnoException).code === 'ESTALLED';
       if (isStall && attempt < maxAttempts - 1) {
         const backoff = calculateBackoff(attempt, DEFAULT_RETRY_OPTIONS);
-        // Dynamic import to avoid circular — mcpLog is optional here
-        try {
-          const { mcpLog } = await import('../utils/logger.js');
-          mcpLog('warning', `${label} stalled, retrying in ${backoff}ms (attempt ${attempt + 1})`, 'stability');
-        } catch { /* logger unavailable, continue silently */ }
+        mcpLog('warning', `${label} stalled, retrying in ${backoff}ms (attempt ${attempt + 1})`, 'stability');
         await sleep(backoff);
         continue;
       }

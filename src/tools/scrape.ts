@@ -203,13 +203,7 @@ async function processItemsWithLlm(
     return item;
   }, 3);
 
-  const updated = successItems.slice();
-  for (let i = 0; i < llmResults.length; i++) {
-    const llmResult = llmResults[i];
-    if (llmResult) updated[i] = llmResult;
-  }
-
-  return { items: updated, llmErrors };
+  return { items: llmResults, llmErrors };
 }
 
 function assembleContentEntries(successItems: ProcessedResult[], failedContents: string[]): string[] {

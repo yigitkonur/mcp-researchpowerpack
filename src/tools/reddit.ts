@@ -9,6 +9,7 @@ import { aggregateAndRankReddit, generateRedditEnhancedOutput } from '../utils/u
 import { REDDIT } from '../config/index.js';
 import { classifyError } from '../utils/errors.js';
 import { createLLMProcessor, processContentWithLLM } from '../services/llm-processor.js';
+import { pMap } from '../utils/concurrency.js';
 import { getToolConfig } from '../config/loader.js';
 import {
   mcpLog,
@@ -165,6 +166,7 @@ interface PostProcessResult {
   successful: number;
   failed: number;
   llmErrors: number;
+  llmAvailable: boolean;
   contents: string[];
 }
 
@@ -232,45 +234,50 @@ async function fetchAndProcessPosts(
   const tokensPerUrl = use_llm ? Math.floor(TOKEN_BUDGETS.RESEARCH / urls.length) : 0;
   const enhancedInstruction = use_llm ? enhanceExtractionInstruction(what_to_extract) : undefined;
 
-  let successful = 0;
   let failed = 0;
-  let llmErrors = 0;
-  const contents: string[] = [];
+  const failedContents: string[] = [];
+  const successEntries: { url: string; result: PostResult; content: string }[] = [];
 
   for (const [url, result] of results) {
     if (result instanceof Error) {
       failed++;
-      contents.push(`## ❌ Failed: ${url}\n\n_${result.message}_`);
+      failedContents.push(`## ❌ Failed: ${url}\n\n_${result.message}_`);
       continue;
     }
-
-    successful++;
-    let postContent = formatPost(result, fetchComments);
-
-    if (use_llm && llmProcessor) {
-      const llmOut = await applyLlmToPost(
-        postContent, result, url, llmProcessor, enhancedInstruction,
-        tokensPerUrl, successful, urls.length,
-      );
-      postContent = llmOut.content;
-      if (llmOut.llmFailed) llmErrors++;
-    }
-
-    contents.push(postContent);
+    successEntries.push({ url, result, content: formatPost(result, fetchComments) });
   }
 
-  return { successful, failed, llmErrors, contents };
+  let llmErrors = 0;
+  let processedEntries: typeof successEntries;
+
+  if (use_llm && llmProcessor && successEntries.length > 0) {
+    const llmResults = await pMap(successEntries, async (entry, index) => {
+      const llmOut = await applyLlmToPost(
+        entry.content, entry.result, entry.url, llmProcessor, enhancedInstruction,
+        tokensPerUrl, index + 1, successEntries.length,
+      );
+      if (llmOut.llmFailed) llmErrors++;
+      return { ...entry, content: llmOut.content };
+    }, 3);
+    processedEntries = llmResults;
+  } else {
+    processedEntries = successEntries;
+  }
+
+  const contents = [...failedContents, ...processedEntries.map(e => e.content)];
+
+  return { successful: successEntries.length, failed, llmErrors, llmAvailable: llmProcessor !== null, contents };
 }
 
 function buildRedditStatusExtras(
   rateLimitHits: number,
   use_llm: boolean,
-  llmProcessor: ReturnType<typeof createLLMProcessor>,
+  llmAvailable: boolean,
   llmErrors: number,
 ): string {
   const extras: string[] = [];
   if (rateLimitHits > 0) extras.push(`⚠️ ${rateLimitHits} rate limit retries`);
-  if (use_llm && !llmProcessor) {
+  if (use_llm && !llmAvailable) {
     extras.push('⚠️ LLM unavailable (OPENROUTER_API_KEY not set)');
   } else if (llmErrors > 0) {
     extras.push(`⚠️ ${llmErrors} LLM extraction failures`);
@@ -354,10 +361,9 @@ export async function handleGetRedditPosts(
       batchResult.results, urls, fetchComments, use_llm, what_to_extract,
     );
 
-    const llmProcessor = use_llm ? createLLMProcessor() : null;
     const tokensPerUrl = use_llm ? Math.floor(TOKEN_BUDGETS.RESEARCH / urls.length) : 0;
     const extraStatus = buildRedditStatusExtras(
-      batchResult.rateLimitHits, use_llm, llmProcessor, processResult.llmErrors,
+      batchResult.rateLimitHits, use_llm, processResult.llmAvailable, processResult.llmErrors,
     );
 
     return formatRedditOutput(

@@ -298,7 +298,11 @@ export class ResearchClient {
               return this.client.chat.completions.create(
                 payload as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
                 { signal: mergedController.signal }
-              );
+              ).finally(() => {
+                signal?.removeEventListener('abort', abortMerged);
+                stallSignal.removeEventListener('abort', abortMerged);
+                timeoutSignal.removeEventListener('abort', abortMerged);
+              });
             },
             RESEARCH_REQUEST_DEADLINE_MS,
             `research (${model})`,

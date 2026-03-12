@@ -325,7 +325,7 @@ export class ScraperClient {
     }
 
     const result = await this.batchScrape(urls, options);
-    return [...result.results];
+    return result.results as Array<ScrapeResponse & { url: string }>;
   }
 
   /**
@@ -394,9 +394,10 @@ export class ScraperClient {
 
       mcpLog('info', `Completed batch ${batchNum + 1}/${totalBatches} (${allResults.length}/${urls.length} total)`, 'scraper');
 
-      // Small delay between batches to avoid overwhelming the API
+      // Adaptive delay between batches — back off harder under rate limiting
       if (batchNum < totalBatches - 1) {
-        await sleep(500);
+        const batchDelay = rateLimitHits > 0 ? 2000 : 500;
+        await sleep(batchDelay);
       }
     }
 

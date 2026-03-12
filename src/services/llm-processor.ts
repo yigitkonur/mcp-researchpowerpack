@@ -239,7 +239,11 @@ export async function processContentWithLLM(
             return processor.chat.completions.create(
               requestBody as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
               { signal: mergedController.signal }
-            );
+            ).finally(() => {
+              signal?.removeEventListener('abort', abortMerged);
+              stallSignal.removeEventListener('abort', abortMerged);
+              timeoutSignal.removeEventListener('abort', abortMerged);
+            });
           },
           LLM_REQUEST_DEADLINE_MS,
           `LLM extraction (${activeModel})`,

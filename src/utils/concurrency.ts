@@ -27,14 +27,21 @@ export async function pMap<T, R>(
 
   const results: R[] = new Array(items.length);
   let nextIndex = 0;
+  const internalAbort = new AbortController();
 
   async function worker(): Promise<void> {
-    while (nextIndex < items.length) {
-      if (signal?.aborted) {
+    while (true) {
+      if (signal?.aborted || internalAbort.signal.aborted) {
         throw new DOMException('Aborted', 'AbortError');
       }
       const index = nextIndex++;
-      results[index] = await mapper(items[index]!, index);
+      if (index >= items.length) break;
+      try {
+        results[index] = await mapper(items[index]!, index);
+      } catch (err) {
+        internalAbort.abort(); // Signal other workers to stop picking up new work
+        throw err;
+      }
     }
   }
 
@@ -73,12 +80,7 @@ export async function pMapSettled<T, R>(
 
   async function worker(): Promise<void> {
     while (nextIndex < items.length) {
-      if (signal?.aborted) {
-        // Mark remaining items as rejected
-        const index = nextIndex++;
-        results[index] = { status: 'rejected', reason: new DOMException('Aborted', 'AbortError') };
-        continue;
-      }
+      if (signal?.aborted) break;
       const index = nextIndex++;
       try {
         const value = await mapper(items[index]!, index);
@@ -95,5 +97,13 @@ export async function pMapSettled<T, R>(
   }
 
   await Promise.all(workers);
+
+  // Fill any unprocessed items after abort
+  for (let i = 0; i < items.length; i++) {
+    if (results[i] === undefined) {
+      results[i] = { status: 'rejected', reason: new DOMException('Aborted', 'AbortError') };
+    }
+  }
+
   return results;
 }
