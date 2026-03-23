@@ -213,6 +213,7 @@ async function main(): Promise<void> {
   const startedAt = Date.now();
 
   server.get('/health', (c) => c.json(buildHealthPayload(server, startedAt)));
+  server.get('/healthz', (c) => c.json(buildHealthPayload(server, startedAt)));
   server.resource(
     {
       name: 'server-health',
