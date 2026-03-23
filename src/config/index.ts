@@ -3,6 +3,8 @@
  * All environment variables, constants, and LLM config in one place
  */
 
+import { Logger } from 'mcp-use';
+
 import { VERSION, PACKAGE_NAME, PACKAGE_DESCRIPTION } from '../version.js';
 
 // Import version utilities (not re-exported - use directly from version.ts if needed externally)
@@ -25,6 +27,8 @@ function safeParseInt(
   min: number,
   max: number
 ): number {
+  const logger = Logger.get('config');
+
   if (!value) {
     return defaultVal;
   }
@@ -32,17 +36,17 @@ function safeParseInt(
   const parsed = parseInt(value, 10);
   
   if (isNaN(parsed)) {
-    console.warn(`[Config] Invalid number "${value}", using default ${defaultVal}`);
+    logger.warn(`Invalid number "${value}", using default ${defaultVal}`);
     return defaultVal;
   }
   
   if (parsed < min) {
-    console.warn(`[Config] Value ${parsed} below minimum ${min}, clamping to ${min}`);
+    logger.warn(`Value ${parsed} below minimum ${min}, clamping to ${min}`);
     return min;
   }
   
   if (parsed > max) {
-    console.warn(`[Config] Value ${parsed} above maximum ${max}, clamping to ${max}`);
+    logger.warn(`Value ${parsed} above maximum ${max}, clamping to ${max}`);
     return max;
   }
   
@@ -172,11 +176,11 @@ export function getCapabilities(): Capabilities {
 
 export function getMissingEnvMessage(capability: keyof Capabilities): string {
   const messages: Record<keyof Capabilities, string> = {
-    reddit: '❌ **Reddit tools unavailable.** Set `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` to enable.\n\n👉 Create a Reddit app at: https://www.reddit.com/prefs/apps (select "script" type)',
-    search: '❌ **Search unavailable.** Set `SERPER_API_KEY` to enable web search and Reddit search.\n\n👉 Get your free API key at: https://serper.dev (2,500 free queries)',
-    scraping: '❌ **Web scraping unavailable.** Set `SCRAPEDO_API_KEY` to enable URL content extraction.\n\n👉 Sign up at: https://scrape.do (1,000 free credits)',
-    deepResearch: '❌ **Deep research unavailable.** Set `OPENROUTER_API_KEY` to enable AI-powered research.\n\n👉 Get your API key at: https://openrouter.ai/keys',
-    llmExtraction: '⚠️ **AI extraction disabled.** The `use_llm` and `what_to_extract` features require `OPENROUTER_API_KEY`.\n\nScraping will work but without intelligent content filtering.',
+    reddit: '❌ **Reddit tools unavailable.** Set `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` to enable `get-reddit-post`.\n\n👉 Create a Reddit app at: https://www.reddit.com/prefs/apps (select "script" type)',
+    search: '❌ **Search unavailable.** Set `SERPER_API_KEY` to enable `web-search` and `search-reddit`.\n\n👉 Get your free API key at: https://serper.dev (2,500 free queries)',
+    scraping: '❌ **Web scraping unavailable.** Set `SCRAPEDO_API_KEY` to enable `scrape-links`.\n\n👉 Sign up at: https://scrape.do (1,000 free credits)',
+    deepResearch: '❌ **Deep research unavailable.** Set `OPENROUTER_API_KEY` to enable `deep-research`.\n\n👉 Get your API key at: https://openrouter.ai/keys',
+    llmExtraction: '⚠️ **AI extraction disabled.** The `use_llm` and `what_to_extract` features for `scrape-links` require `OPENROUTER_API_KEY`.\n\nScraping will work but without intelligent content filtering.',
     cerebras: '⚠️ **Cerebras not configured.** Set `USE_CEREBRAS=true` and `CEREBRAS_API_KEY` to use Cerebras for LLM extraction.\n\n👉 Get your API key at: https://cloud.cerebras.ai',
   };
   return messages[capability];
@@ -219,6 +223,19 @@ export const REDDIT = {
   MAX_POSTS: 50,
   RETRY_COUNT: 5,
   RETRY_DELAYS: [2000, 4000, 8000, 16000, 32000] as const,
+  EXTRACTION_SUFFIX: `
+---
+
+⚠️ IMPORTANT: Extract and synthesize the key insights, opinions, and recommendations from these Reddit discussions. Focus on:
+- Common themes and consensus across posts
+- Specific recommendations with context
+- Contrasting viewpoints and debates
+- Real-world experiences and lessons learned
+- Technical details and implementation tips
+
+Be comprehensive but concise. Prioritize actionable insights.
+
+---`,
 } as const;
 
 // ============================================================================
@@ -239,7 +256,7 @@ export const CTR_WEIGHTS: Record<number, number> = {
 } as const;
 
 // ============================================================================
-// LLM Extraction Model (uses OPENROUTER for scrape_links AI extraction)
+// LLM Extraction Model (uses OPENROUTER for scrape-links AI extraction)
 // ============================================================================
 
 interface LlmExtractionConfig {

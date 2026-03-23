@@ -52,6 +52,7 @@ test-logs/
 .cache/
 .npm/
 .eslintcache
+.mcp-use/
 
 # ============================================
 # Agent workspaces (runtime artifacts)

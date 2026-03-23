@@ -3,13 +3,19 @@
  * Implements robust error handling that NEVER crashes the MCP server
  */
 
-import type { ScrapeLinksParams, ScrapeLinksOutput } from '../schemas/scrape-links.js';
+import type { MCPServer } from 'mcp-use/server';
+
+import { SCRAPER, getCapabilities, getMissingEnvMessage } from '../config/index.js';
+import {
+  scrapeLinksOutputSchema,
+  scrapeLinksParamsSchema,
+  type ScrapeLinksParams,
+  type ScrapeLinksOutput,
+} from '../schemas/scrape-links.js';
 import { ScraperClient } from '../clients/scraper.js';
 import { MarkdownCleaner } from '../services/markdown-cleaner.js';
 import { createLLMProcessor, processContentWithLLM } from '../services/llm-processor.js';
 import { removeMetaTags } from '../utils/markdown-formatter.js';
-import { SCRAPER } from '../config/index.js';
-import { getToolConfig } from '../config/loader.js';
 import { classifyError } from '../utils/errors.js';
 import { pMap } from '../utils/concurrency.js';
 import {
@@ -21,21 +27,26 @@ import {
   TOKEN_BUDGETS,
   calculateTokenAllocation,
 } from './utils.js';
+import {
+  createToolReporter,
+  NOOP_REPORTER,
+  toolFailure,
+  toolSuccess,
+  toToolResponse,
+  type ToolExecutionResult,
+  type ToolReporter,
+} from './mcp-helpers.js';
 
 // Module-level singleton - MarkdownCleaner is stateless
 const markdownCleaner = new MarkdownCleaner();
 
-// Get extraction prefix+suffix from YAML config (fallback to hardcoded)
+// Extraction prefix/suffix are kept in runtime config to avoid YAML indirection.
 function getExtractionPrefix(): string {
-  const config = getToolConfig('scrape_links');
-  const prefix = config?.limits?.extraction_prefix;
-  return typeof prefix === 'string' ? prefix : SCRAPER.EXTRACTION_PREFIX;
+  return SCRAPER.EXTRACTION_PREFIX;
 }
 
 function getExtractionSuffix(): string {
-  const config = getToolConfig('scrape_links');
-  const suffix = config?.limits?.extraction_suffix;
-  return typeof suffix === 'string' ? suffix : SCRAPER.EXTRACTION_SUFFIX;
+  return SCRAPER.EXTRACTION_SUFFIX;
 }
 
 function enhanceExtractionInstruction(instruction: string | undefined): string {
@@ -77,27 +88,17 @@ function createScrapeErrorResponse(
   totalUrls: number,
   retryable = false,
   alternatives?: string[],
-): { content: string; structuredContent: ScrapeLinksOutput } {
-  return {
-    content: formatError({
+): ToolExecutionResult<ScrapeLinksOutput> {
+  return toolFailure(
+    `${formatError({
       code,
       message,
       retryable,
-      toolName: 'scrape_links',
+      toolName: 'scrape-links',
       howToFix: code === 'NO_URLS' ? ['Provide at least one valid URL'] : undefined,
       alternatives,
-    }),
-    structuredContent: {
-      content: message,
-      metadata: {
-        total_urls: totalUrls,
-        successful: 0,
-        failed: totalUrls,
-        total_credits: 0,
-        execution_time_ms: Date.now() - startTime,
-      },
-    },
-  };
+    })}\n\nExecution time: ${formatDuration(Date.now() - startTime)}`,
+  );
 }
 
 function validateAndPartitionUrls(urls: string[]): { validUrls: string[]; invalidUrls: string[] } {
@@ -222,11 +223,11 @@ function assembleContentEntries(successItems: ProcessedResult[], failedContents:
 
 function buildScrapeNextSteps(metrics: ScrapeMetrics): string[] {
   return [
-    metrics.successful > 0 ? 'FOLLOW LINKS: If scraped content references other URLs/docs/sources, scrape those too: scrape_links(urls=[...extracted URLs...], use_llm=true)' : null,
-    metrics.successful > 0 ? 'VERIFY: web_search(keywords=["claim from scraped content", "topic official source", "topic benchmark data"]) — cross-check extracted claims' : null,
-    metrics.successful > 0 ? 'COMMUNITY: search_reddit(queries=["topic experiences", "topic recommendations", "topic issues"]) — if topic warrants community perspective' : null,
-    metrics.successful > 0 ? 'SYNTHESIZE (only after verifying + community check): deep_research(questions=[{question: "Based on scraped data and verification..."}])' : null,
-    metrics.failed > 0 ? `Retry failed URLs with longer timeout: scrape_links(urls=[...], timeout=60)` : null,
+    metrics.successful > 0 ? 'FOLLOW LINKS: If scraped content references other URLs/docs/sources, scrape those too: scrape-links(urls=[...extracted URLs...], use_llm=true)' : null,
+    metrics.successful > 0 ? 'VERIFY: web-search(keywords=["claim from scraped content", "topic official source", "topic benchmark data"]) — cross-check extracted claims' : null,
+    metrics.successful > 0 ? 'COMMUNITY: search-reddit(queries=["topic experiences", "topic recommendations", "topic issues"]) — if topic warrants community perspective' : null,
+    metrics.successful > 0 ? 'SYNTHESIZE (only after verifying + community check): deep-research(questions=[{question: "Based on scraped data and verification..."}])' : null,
+    metrics.failed > 0 ? `Retry failed URLs with longer timeout: scrape-links(urls=[...], timeout=60)` : null,
   ].filter(Boolean) as string[];
 }
 
@@ -291,8 +292,9 @@ function buildScrapeResponse(
  * NEVER throws - always returns a valid response with content and metadata
  */
 export async function handleScrapeLinks(
-  params: ScrapeLinksParams
-): Promise<{ content: string; structuredContent: ScrapeLinksOutput }> {
+  params: ScrapeLinksParams,
+  reporter: ToolReporter = NOOP_REPORTER,
+): Promise<ToolExecutionResult<ScrapeLinksOutput>> {
   const startTime = Date.now();
 
   if (!params.urls || params.urls.length === 0) {
@@ -300,11 +302,12 @@ export async function handleScrapeLinks(
   }
 
   const { validUrls, invalidUrls } = validateAndPartitionUrls(params.urls);
+  await reporter.log('info', `Validated ${validUrls.length} scrapeable URL(s) and ${invalidUrls.length} invalid URL(s)`);
 
   if (validUrls.length === 0) {
     return createScrapeErrorResponse('INVALID_URLS', `All ${params.urls.length} URLs are invalid`, startTime, params.urls.length, false, [
-      'web_search(keywords=["topic documentation", "topic guide"]) — search for valid URLs first, then scrape the results',
-      'search_reddit(queries=["topic recommendations"]) — find discussion URLs to scrape instead',
+      'web-search(keywords=["topic documentation", "topic guide"]) — search for valid URLs first, then scrape the results',
+      'search-reddit(queries=["topic recommendations"]) — find discussion URLs to scrape instead',
     ]);
   }
 
@@ -312,6 +315,7 @@ export async function handleScrapeLinks(
   const totalBatches = Math.ceil(validUrls.length / SCRAPER.BATCH_SIZE);
 
   mcpLog('info', `Starting scrape: ${validUrls.length} URL(s), ${tokensPerUrl} tokens/URL, ${totalBatches} batch(es)`, 'scrape');
+  await reporter.progress(15, 100, 'Preparing scraper clients');
 
   let clients: ScrapeClients;
   try {
@@ -319,9 +323,9 @@ export async function handleScrapeLinks(
   } catch (error) {
     const err = classifyError(error);
     return createScrapeErrorResponse('CLIENT_INIT_FAILED', `Failed to initialize scraper: ${err.message}`, startTime, params.urls.length, false, [
-      'web_search(keywords=["topic key findings", "topic summary", "topic overview"]) — search for information instead of scraping',
-      'search_reddit(queries=["topic discussion", "topic recommendations"]) — get community insights as an alternative',
-      'deep_research(questions=[{question: "Summarize the key information from [topic/URLs]"}]) — use AI research to gather equivalent information',
+      'web-search(keywords=["topic key findings", "topic summary", "topic overview"]) — search for information instead of scraping',
+      'search-reddit(queries=["topic discussion", "topic recommendations"]) — get community insights as an alternative',
+      'deep-research(questions=[{question: "Summarize the key information from [topic/URLs]"}]) — use AI research to gather equivalent information',
     ]);
   }
 
@@ -329,11 +333,17 @@ export async function handleScrapeLinks(
     ? enhanceExtractionInstruction(params.what_to_extract)
     : undefined;
 
+  await reporter.progress(35, 100, 'Fetching page content');
   const results = await clients.client.scrapeMultiple(validUrls, { timeout: params.timeout });
   mcpLog('info', `Scraping complete. Processing ${results.length} results...`, 'scrape');
+  await reporter.log('info', `Fetched ${results.length} scrape response(s) from the provider`);
+  await reporter.progress(60, 100, 'Cleaning and classifying scrape results');
 
   const { successItems, failedContents, metrics } = processScrapeResults(results, invalidUrls);
 
+  if (params.use_llm && successItems.length > 0) {
+    await reporter.progress(80, 100, 'Running optional LLM extraction over scraped pages');
+  }
   const { items: processedItems, llmErrors } = await processItemsWithLlm(
     successItems, params, enhancedInstruction, tokensPerUrl, clients.llmProcessor,
   );
@@ -342,6 +352,49 @@ export async function handleScrapeLinks(
   const executionTime = Date.now() - startTime;
 
   mcpLog('info', `Completed: ${metrics.successful} successful, ${metrics.failed} failed, ${metrics.totalCredits} credits used`, 'scrape');
+  await reporter.log(
+    'info',
+    `Scrape completed with ${metrics.successful} success(es), ${metrics.failed} failure(s), and ${llmErrors} LLM extraction issue(s)`,
+  );
 
-  return buildScrapeResponse(params, contents, metrics, tokensPerUrl, totalBatches, llmErrors, executionTime);
+  const result = buildScrapeResponse(
+    params,
+    contents,
+    metrics,
+    tokensPerUrl,
+    totalBatches,
+    llmErrors,
+    executionTime,
+  );
+  return toolSuccess(result.content, result.structuredContent);
+}
+
+export function registerScrapeLinksTool(server: MCPServer): void {
+  server.tool(
+    {
+      name: 'scrape-links',
+      title: 'Scrape Links',
+      description:
+        'Scrape 1-50 URLs over HTTP, clean the content, and optionally run AI extraction over the page text.',
+      schema: scrapeLinksParamsSchema,
+      outputSchema: scrapeLinksOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args, ctx) => {
+      if (!getCapabilities().scraping) {
+        return toToolResponse(toolFailure(getMissingEnvMessage('scraping')));
+      }
+
+      const reporter = createToolReporter(ctx, 'scrape-links');
+      const result = await handleScrapeLinks(args, reporter);
+
+      await reporter.progress(100, 100, result.isError ? 'Scrape failed' : 'Scrape complete');
+      return toToolResponse(result);
+    },
+  );
 }

@@ -1,136 +1,113 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents working in this repository.
 
 ## What This Is
 
-MCP server providing 5 research tools to AI assistants: web search (Google via Serper), Reddit search (also via Serper with `site:reddit.com`) & post extraction (via Reddit OAuth), URL scraping with optional AI extraction, and AI-powered deep research synthesis. Supports STDIO, HTTP Streamable, and Cloudflare Workers transports. Node.js >= 20.0.0.
+HTTP-only MCP server built on `mcp-use`. It exposes 5 research tools over `/mcp`:
 
-## Build & Run
+- `web-search`
+- `search-reddit`
+- `get-reddit-post`
+- `scrape-links`
+- `deep-research`
+
+There is no stdio transport and no Cloudflare worker target anymore.
+
+## Build, Run, Test
 
 ```bash
-pnpm build           # tsc + copy src/config/yaml/ to dist/config/
-pnpm dev             # tsx live TypeScript
-pnpm start               # node dist/index.js
-pnpm typecheck       # type check without emitting (does NOT check worker.ts)
+pnpm install
+pnpm dev
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm start
+pnpm inspect
 ```
+
+Useful local run:
 
 ```bash
-pnpm test:web-search     # test web search tool
-pnpm test:reddit-search  # test Reddit search
-pnpm test:scrape-links   # test scraping
-pnpm test:deep-research  # test deep research
-pnpm test:all            # run all tests
-pnpm test:check          # check environment setup
+PORT=3000 HOST=127.0.0.1 pnpm start
 ```
 
-Transport modes:
+Health check:
+
 ```bash
-npx mcp-research-powerpack                      # STDIO (default)
-MCP_TRANSPORT=http MCP_PORT=3000 npx mcp-research-powerpack  # HTTP
+curl http://127.0.0.1:3000/health
 ```
 
-Binary names: `mcp-research-powerpack`, `research-powerpack-mcp`.
+## Important Environment Variables
 
-## Environment Variables
+Server:
 
-Server starts with any configuration — tools are silently disabled if their API keys are missing.
+- `PORT`
+- `HOST`
+- `MCP_URL`
+- `ALLOWED_ORIGINS`
+- `REDIS_URL`
 
-**API keys (each enables a capability):**
-| Variable | Enables | Free Tier |
-|----------|---------|-----------|
-| `SERPER_API_KEY` | `web_search`, `search_reddit` | 2,500 queries/mo |
-| `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` | `get_reddit_post` | unlimited |
-| `SCRAPEDO_API_KEY` | `scrape_links` | 1,000 credits/mo |
-| `OPENROUTER_API_KEY` | `deep_research`, `use_llm` in scrape_links | pay-as-you-go |
-| `CEREBRAS_API_KEY` | Cerebras for `scrape_links` extraction | — |
-| `USE_CEREBRAS` | Enable Cerebras extraction (`true`/`false`) | `false` |
+Production boot now requires either `ALLOWED_ORIGINS` or `MCP_URL` so host validation is enabled.
 
-Note: `search_reddit` uses Google Serper (`site:reddit.com`), NOT the Reddit API. Only `get_reddit_post` uses Reddit OAuth credentials.
+Providers:
 
-**Optional tuning:**
-- `RESEARCH_MODEL` — Primary deep research model (default: `x-ai/grok-4-fast`)
-- `RESEARCH_FALLBACK_MODEL` — Fallback when primary fails (default: `google/gemini-2.5-flash`)
-- `LLM_EXTRACTION_MODEL` — Extraction model (default: `openai/gpt-oss-120b:nitro`)
-- `API_TIMEOUT_MS` — Request timeout (default: 1,800,000 / 30min)
-- `DEFAULT_REASONING_EFFORT` — `low|medium|high` (default: `high`)
-- `DEFAULT_MAX_URLS` — Max search results per research question (default: 100, range: 10-200)
-- `LLM_ENABLE_REASONING` — Enable reasoning in LLM extraction (default: `true`, set `false` to disable)
-- `OPENROUTER_BASE_URL` — Override OpenRouter endpoint
-- `DEBUG_REDDIT` — Set `true` for Reddit token cache debug logging
-- `USE_CEREBRAS` — Set to `true` to use Cerebras (zai-glm-4.7) for content extraction instead of OpenRouter. Requires `CEREBRAS_API_KEY`.
-- `CEREBRAS_API_KEY` — API key for Cerebras cloud. Get one at https://cloud.cerebras.ai
+- `SERPER_API_KEY`
+- `REDDIT_CLIENT_ID`
+- `REDDIT_CLIENT_SECRET`
+- `SCRAPEDO_API_KEY`
+- `OPENROUTER_API_KEY`
+- `OPENROUTER_BASE_URL`
+- `RESEARCH_MODEL`
+- `RESEARCH_FALLBACK_MODEL`
+- `LLM_EXTRACTION_MODEL`
+- `DEFAULT_REASONING_EFFORT`
+- `DEFAULT_MAX_URLS`
+- `API_TIMEOUT_MS`
+- `USE_CEREBRAS`
+- `CEREBRAS_API_KEY`
+
+Missing provider keys should disable the corresponding tool gracefully rather than crashing the server.
 
 ## Architecture
 
-```
+```text
+index.ts                     Root HTTP server entrypoint (mcp-use)
 src/
-├── index.ts                    # STDIO + HTTP server entry point, graceful shutdown, stdin disconnect detection
-├── worker.ts                   # Cloudflare Workers entry point (excluded from tsconfig.json, compiled by Wrangler)
-├── version.ts                  # Version string (hardcoded fallback 3.6.9 for Workers where package.json unavailable)
-├── config/
-│   ├── index.ts                # Env parsing, capability detection, lazy Proxy config objects with resetEnvCache()
-│   ├── loader.ts               # YAML tool config loader (readFileSync — incompatible with Workers runtime)
-│   ├── types.ts                # Config type definitions
-│   └── yaml/tools.yaml         # Complete tool specifications (single source of truth for tool metadata)
-├── clients/                    # External API integrations
-│   ├── search.ts               # Google Serper API (8 concurrent calls)
-│   ├── reddit.ts               # Reddit OAuth API (5 concurrent calls, module-level token cache with 60s expiry)
-│   ├── scraper.ts              # Scrape.do with 3-mode fallback: basic → JS rendering → JS + US geo
-│   └── research.ts             # OpenRouter LLM client (tries primary model, falls back to RESEARCH_FALLBACK_MODEL; Cerebras supported via USE_CEREBRAS)
-├── tools/
-│   ├── definitions.ts          # Tool metadata generated from YAML
-│   ├── registry.ts             # Central handler registry & execution pipeline
-│   ├── search.ts               # web_search handler (3-100 parallel keywords)
-│   ├── reddit.ts               # search_reddit (10-50 queries via Serper) + get_reddit_post (via Reddit API)
-│   ├── scrape.ts               # scrape_links handler (1-50 URLs, 10 concurrent, batches of 30)
-│   ├── research.ts             # deep_research handler (1-10 questions, 32K token budget, file attachments)
-│   └── utils.ts                # Tool-specific utilities
-├── schemas/                    # Zod input validation
-│   ├── web-search.ts
-│   ├── scrape-links.ts
-│   └── deep-research.ts
-├── services/
-│   ├── llm-processor.ts        # OpenRouter API integration (3 concurrent extractions, maxRetries: 0)
-│   ├── markdown-cleaner.ts     # HTML → Markdown (turndown), truncates at 512K chars, linear-time comment removal
-│   └── file-attachment.ts      # File attachment handling for deep_research (reads filesystem, supports line ranges)
-└── utils/
-    ├── errors.ts               # Error classification: retryable (429, 5xx → backoff) vs non-retryable
-    ├── logger.ts               # MCP SDK structured logging (falls back to stderr)
-    ├── concurrency.ts          # Bounded parallel execution (pMap)
-    ├── url-aggregator.ts       # CTR-weighted URL ranking with consensus detection
-    ├── markdown-formatter.ts   # Markdown output formatting
-    └── response.ts             # 70/20/10 response formatter (formatSuccess, formatError, formatBatchHeader)
+  config/index.ts            Env parsing, capability detection, runtime constants
+  version.ts                 Version + package metadata loader
+  clients/                   External API integrations
+  tools/registry.ts          Registers all tools on MCPServer
+  tools/search.ts            web-search handler + registration
+  tools/reddit.ts            search-reddit / get-reddit-post handlers + registration
+  tools/scrape.ts            scrape-links handler + registration
+  tools/research.ts          deep-research handler + registration
+  tools/mcp-helpers.ts       Explicit tool result helpers, response adapters, progress reporters
+  schemas/                   Zod v4 input schemas
+  services/                  Shared LLM/file/markdown services
+  utils/                     Logging, retries, concurrency, formatting, error classification
+tests/http-server.ts         End-to-end HTTP integration test
 ```
 
-**Key design decisions:**
-- **Tool specs in YAML** (`config/yaml/tools.yaml`) — single source of truth for tool names, descriptions, and parameter specs. Copied into `dist/config/` during build. If you add new YAML files, they must be in this directory.
-- **Never-throw pattern** — server never crashes on tool failures. All errors go through `classifyError()` which categorizes as retryable (429, 5xx → exponential backoff) or non-retryable (→ user-friendly message with setup instructions).
-- **Capability-based degradation** — missing API keys disable specific tools with helpful setup instructions rather than failing.
-- **Bounded concurrency** — web_search: 8, search_reddit: 8, get_reddit_post: 5 (batches of 10), scrape_links: 10 (batches of 30) + 3 LLM extractions, deep_research: 3.
-- **CTR-weighted URL ranking** — search results ranked by click-through rates with consensus detection across multiple queries.
-- **Smart Reddit comment allocation** — 1000 total budget, capped at 200/post: 5+ posts → budget/count each, 2 posts → 200 each (capped from 500).
-- **70/20/10 response format** — all tools return: 70% summary, 20% structured data, 10% actionable next steps.
-- **Model fallback** — `ResearchClient` tries primary model, then falls back to `RESEARCH_FALLBACK_MODEL` on failure.
-- **Scraper fallback** — `ScraperClient.scrapeWithFallback()` tries 3 modes: basic → JavaScript rendering → JavaScript + US geo-targeting.
-- **Gemini special handling** — models matching `google/gemini*` get `tools: [{type: 'google_search'}]` instead of `search_parameters`.
+## Repo Rules
 
-**Execution pipeline** (`tools/registry.ts`): lookup tool → check capability → validate with Zod → execute handler → transform response. Every step catches errors gracefully.
+- Keep imports ESM-safe with `.js` extensions.
+- Tool registration should happen via `server.tool(...)`, not raw SDK request handlers.
+- Prefer capability checks with `getCapabilities()` / `getMissingEnvMessage()` before calling providers.
+- Keep graceful shutdown intact in `index.ts`.
+- If you add a new tool, update:
+  - server registration
+  - README
+  - `.env.example` if new env vars are needed
+  - `tests/http-server.ts` if the public MCP surface changes
 
-## Gotchas
+## Current Validation Path
 
-- **ESM project** (`"type": "module"`) — all imports must use `.js` extensions.
-- **worker.ts excluded from tsconfig** — `pnpm typecheck` does NOT check the Workers entry point. Use `npx wrangler deploy --dry-run` to verify.
-- **Build copies YAML** — the build script copies `src/config/yaml/` to `dist/config/`. New YAML files must be in this directory.
-- **version.ts hardcoded fallback** — has a stale fallback version for Workers runtime where `package.json` is unavailable. Can drift from actual version.
-- **All OpenAI client instances set `maxRetries: 0`** — retry logic is handled manually with custom backoff.
-- **Lazy Proxy config** — `RESEARCH`, `LLM_EXTRACTION` config objects use Proxy for deferred env reads. `resetEnvCache()` clears them for Workers env bridging.
-- **stdin disconnect detection** — explicit handlers for `stdin close/end` and `stdout EPIPE` to prevent 100% CPU when parent process disconnects.
+`pnpm test` boots the HTTP server and checks:
 
-## Cloudflare Workers
-
-`src/worker.ts` bridges Cloudflare env bindings into `process.env` so config modules work in both STDIO and Workers. Avoids importing `tools/definitions.ts` (which uses filesystem YAML loading) and instead registers tools directly from the registry. Uses Durable Objects (`ResearchMcpPowerpack` class with SQLite). Custom domain: `mcp-research-powerpack.workers.yigitkonur.com`.
-
-## CI/CD
-
-GitHub Actions (`.github/workflows/npm-publish.yml`): pushes to main auto-publish to npm. Auto-bumps patch version if already published. Ignores markdown/docs-only changes. `[skip ci]` in commit message skips build. Manual trigger supports patch/minor/major bump.
+- `/health`
+- MCP `initialize`
+- `tools/list`
+- `resources/read` for `health://status`
+- invalid tool input handling
+- missing capability handling

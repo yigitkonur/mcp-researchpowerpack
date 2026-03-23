@@ -37,10 +37,10 @@ const MAX_TOP_RESOURCES = 20 as const;
 /** Maximum URLs to show in frequency metadata list */
 const MAX_FREQ_METADATA_URLS = 30 as const;
 
-/** Maximum top URLs for scrape_links suggestion */
+/** Maximum top URLs for scrape-links suggestion */
 const MAX_SCRAPE_SUGGESTION_URLS = 5 as const;
 
-/** Maximum top URLs for Reddit get_reddit_post suggestion */
+/** Maximum top URLs for Reddit get-reddit-post suggestion */
 const MAX_REDDIT_SUGGESTION_URLS = 10 as const;
 
 /** Maximum short URL display length */
@@ -316,13 +316,13 @@ export function generateEnhancedOutput(
   lines.push('### ➡️ Next Steps');
   lines.push('');
 
-  // Generate URL list for scrape_links command
+  // Generate URL list for scrape-links command
   const topUrls = rankedUrls.slice(0, Math.min(MAX_SCRAPE_SUGGESTION_URLS, rankedUrls.length));
   if (topUrls.length > 0) {
     const urlList = topUrls.map(u => `"${u.url}"`).join(', ');
     lines.push(`**Scrape top consensus URLs for full content:**`);
     lines.push('```');
-    lines.push(`scrape_links(urls=[${urlList}], use_llm=true, what_to_extract="Extract key insights, recommendations, and actionable information")`);
+    lines.push(`scrape-links(urls=[${urlList}], use_llm=true, what_to_extract="Extract key insights, recommendations, and actionable information")`);
     lines.push('```');
     lines.push('');
   }
@@ -330,14 +330,14 @@ export function generateEnhancedOutput(
   // Reddit follow-up
   lines.push(`**Get community perspective from Reddit:**`);
   lines.push('```');
-  lines.push(`search_reddit(queries=["${allKeywords[0] || 'topic'} reddit", "${allKeywords[0] || 'topic'} recommendations", "${allKeywords[0] || 'topic'} best practices"])`);
+  lines.push(`search-reddit(queries=["${allKeywords[0] || 'topic'} reddit", "${allKeywords[0] || 'topic'} recommendations", "${allKeywords[0] || 'topic'} best practices"])`);
   lines.push('```');
   lines.push('');
 
   // Deep research follow-up
   lines.push(`**Synthesize findings with deep research:**`);
   lines.push('```');
-  lines.push(`deep_research(questions=[{question: "Based on web search results, what are the key findings, best practices, and recommendations for [topic]?"}])`);
+  lines.push(`deep-research(questions=[{question: "Based on web search results, what are the key findings, best practices, and recommendations for [topic]?"}])`);
   lines.push('```');
   lines.push('');
   
@@ -704,7 +704,7 @@ export function generateRedditEnhancedOutput(
     const urlList = topUrls.map(u => `"${u.url}"`).join(', ');
     lines.push(`**1. IMMEDIATE — Fetch raw comments (best insights are in comments):**`);
     lines.push('```');
-    lines.push(`get_reddit_post(urls=[${urlList}], fetch_comments=true)`);
+    lines.push(`get-reddit-post(urls=[${urlList}], fetch_comments=true)`);
     lines.push('```');
     lines.push('');
   }
@@ -713,21 +713,21 @@ export function generateRedditEnhancedOutput(
   const topicKeyword = allQueries[0] || 'topic';
   lines.push(`**2. VERIFY — Cross-check Reddit claims with web search:**`);
   lines.push('```');
-  lines.push(`web_search(keywords=["${topicKeyword} official docs", "${topicKeyword} best practices 2025", "${topicKeyword} comparison benchmark"])`);
+  lines.push(`web-search(keywords=["${topicKeyword} official docs", "${topicKeyword} best practices 2025", "${topicKeyword} comparison benchmark"])`);
   lines.push('```');
   lines.push('');
 
   // DEEP DIVE: Scrape external links referenced in posts
   lines.push(`**3. DEEP DIVE — If posts reference external links/docs, scrape them:**`);
   lines.push('```');
-  lines.push(`scrape_links(urls=[...URLs mentioned in Reddit posts...], use_llm=true, what_to_extract="Extract key findings | recommendations | data points | comparisons")`);
+  lines.push(`scrape-links(urls=[...URLs mentioned in Reddit posts...], use_llm=true, what_to_extract="Extract key findings | recommendations | data points | comparisons")`);
   lines.push('```');
   lines.push('');
 
   // SYNTHESIZE: Only after gathering raw data
   lines.push(`**4. SYNTHESIZE — Only after steps 1-3:**`);
   lines.push('```');
-  lines.push(`deep_research(questions=[{question: "Based on Reddit discussions and web verification about [topic], what are the validated recommendations?"}])`);
+  lines.push(`deep-research(questions=[{question: "Based on Reddit discussions and web verification about [topic], what are the validated recommendations?"}])`);
   lines.push('```');
   lines.push('');
 

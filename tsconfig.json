@@ -13,12 +13,12 @@
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/worker.ts"]
+  "include": ["index.ts", "src/**/*", "tests/**/*", ".mcp-use/**/*"],
+  "exclude": ["node_modules", "dist"]
 }

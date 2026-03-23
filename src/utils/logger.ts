@@ -1,38 +1,41 @@
 /**
- * MCP SDK Structured Logging Utility
+ * Server logging utility.
  *
- * Sends log messages to MCP clients via server.sendLoggingMessage().
- * Falls back to stderr before the server is initialized.
+ * This server is HTTP-only, so logging must never depend on a transport-bound
+ * MCP server instance. All logs go to stderr to keep runtime behavior simple
+ * and safe for hosted deployments.
  */
 
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { Logger } from 'mcp-use';
 
 export type LogLevel = 'debug' | 'info' | 'warning' | 'error';
 
-let serverRef: Server | null = null;
-
-/**
- * Initialize the logger with an MCP server reference.
- * Must be called after server creation and before any tool execution.
- */
-export function initLogger(server: Server): void {
-  serverRef = server;
+function getLogger(name: string) {
+  return Logger.get(name);
 }
 
 /**
- * Log message via MCP SDK structured logging.
- * Falls back to stderr if the server isn't initialized yet.
+ * SDK-backed logger with stable component names.
  * @param level - Log level
  * @param message - Message to log
- * @param tool - Tool/logger name for context
+ * @param loggerName - Tool/logger name for context
  */
-export function mcpLog(level: LogLevel, message: string, tool?: string): void {
-  const logger = tool ?? 'research-powerpack';
-  if (serverRef) {
-    serverRef.sendLoggingMessage({ level, data: message, logger }).catch(() => {});
-  } else {
-    // Fallback to stderr before MCP transport is connected
-    console.error(`[${logger}] ${message}`);
+export function mcpLog(level: LogLevel, message: string, loggerName?: string): void {
+  const logger = getLogger(loggerName ?? 'research-powerpack');
+
+  switch (level) {
+    case 'debug':
+      logger.debug(message);
+      break;
+    case 'info':
+      logger.info(message);
+      break;
+    case 'warning':
+      logger.warn(message);
+      break;
+    case 'error':
+      logger.error(message);
+      break;
   }
 }
 

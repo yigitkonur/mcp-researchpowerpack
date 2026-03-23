@@ -8,8 +8,8 @@ import { z } from 'zod';
 // File attachment schema with comprehensive descriptions to guide LLM usage
 const fileAttachmentSchema = z.object({
   path: z
-    .string({ required_error: 'deep_research: File path is required' })
-    .min(1, { message: 'deep_research: File path cannot be empty' })
+    .string({ error: 'deep-research: File path is required' })
+    .min(1, { message: 'deep-research: File path cannot be empty' })
     .describe(
       `**[REQUIRED] Absolute file path to attach.**
 
@@ -25,9 +25,9 @@ The file will be read from the filesystem and included as context for the resear
 **IMPORTANT:** Always use the full absolute path as shown in your IDE or terminal.`
     ),
   start_line: z
-    .number({ invalid_type_error: 'deep_research: start_line must be a number' })
-    .int({ message: 'deep_research: start_line must be an integer' })
-    .positive({ message: 'deep_research: start_line must be a positive integer (1-indexed)' })
+    .number({ error: 'deep-research: start_line must be a number' })
+    .int({ message: 'deep-research: start_line must be an integer' })
+    .positive({ message: 'deep-research: start_line must be a positive integer (1-indexed)' })
     .optional()
     .describe(
       `**[OPTIONAL] Start line number (1-indexed).**
@@ -36,9 +36,9 @@ Use this to focus on a specific section of a large file. If omitted, reads from 
 Example: start_line=50 with end_line=100 reads lines 50-100 only.`
     ),
   end_line: z
-    .number({ invalid_type_error: 'deep_research: end_line must be a number' })
-    .int({ message: 'deep_research: end_line must be an integer' })
-    .positive({ message: 'deep_research: end_line must be a positive integer (1-indexed)' })
+    .number({ error: 'deep-research: end_line must be a number' })
+    .int({ message: 'deep-research: end_line must be an integer' })
+    .positive({ message: 'deep-research: end_line must be a positive integer (1-indexed)' })
     .optional()
     .describe(
       `**[OPTIONAL] End line number (1-indexed).**
@@ -66,13 +66,13 @@ For large files (>500 lines), consider specifying a range to focus the research.
 **BAD EXAMPLE:**
 "cache file" ← Too vague, research will be unfocused`
     ),
-});
+}).strict();
 
 // Research question schema with structured template guidance
 const researchQuestionSchema = z.object({
   question: z
-    .string({ required_error: 'deep_research: Question is required' })
-    .min(10, { message: 'deep_research: Question must be at least 10 characters' })
+    .string({ error: 'deep-research: Question is required' })
+    .min(10, { message: 'deep-research: Question must be at least 10 characters' })
     .describe(
       `**[REQUIRED] Your research question - MUST follow this structured template:**
 
@@ -205,17 +205,16 @@ const researchQuestionSchema = z.object({
 
 **Attach as many files as needed for complete context - there is no limit!**`
     ),
-});
+}).strict();
 
 // Shape object for external consumers who need individual field schemas
 const deepResearchParamsShape = {
   questions: z
-    .array(researchQuestionSchema, { 
-      required_error: 'deep_research: Questions array is required',
-      invalid_type_error: 'deep_research: Questions must be an array'
+    .array(researchQuestionSchema, {
+      error: 'deep-research: Questions must be an array',
     })
-    .min(1, { message: 'deep_research: At least 1 question is required (recommend 2-7 for optimal depth)' })
-    .max(10, { message: 'deep_research: Maximum 10 questions allowed per batch' })
+    .min(1, { message: 'deep-research: At least 1 question is required (recommend 2-7 for optimal depth)' })
+    .max(10, { message: 'deep-research: Maximum 10 questions allowed per batch' })
     .describe(
       `**Batch deep research (2-10 questions) with dynamic token allocation.**
 
@@ -239,5 +238,60 @@ const deepResearchParamsShape = {
     ),
 };
 
-export const deepResearchParamsSchema = z.object(deepResearchParamsShape);
+export const deepResearchParamsSchema = z.object(deepResearchParamsShape).strict();
 export type DeepResearchParams = z.infer<typeof deepResearchParamsSchema>;
+
+export const deepResearchQuestionResultSchema = z.object({
+  question: z
+    .string()
+    .describe('Original research question submitted for this result item.'),
+  content: z
+    .string()
+    .describe('Rendered research answer or error body for this question.'),
+  success: z
+    .boolean()
+    .describe('Whether the question completed successfully.'),
+  error: z
+    .string()
+    .optional()
+    .describe('Error message when the question failed.'),
+  tokensUsed: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe('Total model tokens used for this question when available.'),
+}).strict();
+
+export const deepResearchOutputSchema = z.object({
+  totalQuestions: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Total number of research questions processed in the batch.'),
+  successful: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Number of questions that completed successfully.'),
+  failed: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Number of questions that failed.'),
+  tokensPerQuestion: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Allocated token budget per question.'),
+  totalTokensUsed: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Aggregate tokens consumed across successful questions.'),
+  results: z
+    .array(deepResearchQuestionResultSchema)
+    .describe('Per-question research results including failures when present.'),
+}).strict();
+
+export type DeepResearchOutput = z.infer<typeof deepResearchOutputSchema>;

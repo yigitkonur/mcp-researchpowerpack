@@ -1,9 +1,8 @@
 /**
  * Version Module - Single Source of Truth
  * 
- * This module reads the version from package.json at runtime when running in
- * Node.js, and falls back to hardcoded values in Cloudflare Workers where
- * filesystem access is unavailable.
+ * This module reads package metadata from package.json at runtime and keeps a
+ * fallback copy for environments where package.json cannot be resolved.
  * 
  * Usage:
  *   import { VERSION, PACKAGE_NAME } from './version.js';
@@ -13,10 +12,10 @@ import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
-// Defaults used when running in Workers or if package.json cannot be loaded
+// Defaults used if package.json cannot be loaded at runtime.
 const DEFAULT_PACKAGE_INFO = {
   version: '3.9.5',
-  name: 'mcp-research-powerpack',
+  name: 'mcp-researchpowerpack-http',
   description: 'Research Powerpack MCP Server',
 } as const;
 
@@ -33,7 +32,7 @@ try {
     }
   }
 } catch {
-  // Workers / edge runtime – keep hardcoded defaults
+  // Keep hardcoded defaults when package.json is unavailable
 }
 
 /**
@@ -54,7 +53,7 @@ export const PACKAGE_DESCRIPTION: string = packageJson.description;
 
 /**
  * Formatted version string for user agents and logging
- * Example: "mcp-research-powerpack/3.2.0"
+ * Example: "mcp-researchpowerpack-http/3.2.0"
  */
 export const USER_AGENT_VERSION: string = `${PACKAGE_NAME}/${VERSION}`;
 

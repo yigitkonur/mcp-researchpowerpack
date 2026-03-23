@@ -3,11 +3,17 @@
  * Implements robust error handling that NEVER crashes
  */
 
-import type { DeepResearchParams } from '../schemas/deep-research.js';
-import { ResearchClient, type ResearchResponse } from '../clients/research.js';
+import type { MCPServer } from 'mcp-use/server';
+
+import { getCapabilities, getMissingEnvMessage, RESEARCH, RESEARCH_PROMPTS } from '../config/index.js';
+import {
+  deepResearchOutputSchema,
+  deepResearchParamsSchema,
+  type DeepResearchOutput,
+  type DeepResearchParams,
+} from '../schemas/deep-research.js';
+import { ResearchClient } from '../clients/research.js';
 import { FileAttachmentService } from '../services/file-attachment.js';
-import { RESEARCH, RESEARCH_PROMPTS } from '../config/index.js';
-import { getToolConfig } from '../config/loader.js';
 import { classifyError } from '../utils/errors.js';
 import { pMap } from '../utils/concurrency.js';
 import {
@@ -20,6 +26,15 @@ import {
   TOKEN_BUDGETS,
   calculateTokenAllocation,
 } from './utils.js';
+import {
+  createToolReporter,
+  NOOP_REPORTER,
+  toolFailure,
+  toolSuccess,
+  toToolResponse,
+  type ToolExecutionResult,
+  type ToolReporter,
+} from './mcp-helpers.js';
 
 // Constants
 const MIN_QUESTIONS = 1; // Allow single question for flexibility
@@ -43,11 +58,9 @@ FORMAT RULES:
 - Every sentence = fact, data point, or actionable insight
 - First line of output = content (never a preamble)`;
 
-// Get research suffix from YAML config (fallback to hardcoded)
+// Compression suffix is kept in runtime config.
 function getResearchSuffix(): string {
-  const config = getToolConfig('deep_research');
-  const suffix = config?.limits?.research_suffix;
-  return typeof suffix === 'string' ? suffix : RESEARCH_PROMPTS.SUFFIX;
+  return RESEARCH_PROMPTS.SUFFIX;
 }
 
 function wrapQuestionWithCompression(question: string): string {
@@ -97,7 +110,10 @@ async function executeResearchQuestions(
   client: ResearchClient,
   fileService: FileAttachmentService,
   tokensPerQuestion: number,
+  reporter: ToolReporter,
 ): Promise<QuestionResult[]> {
+  let completed = 0;
+
   return pMap(questions, async (q, index): Promise<QuestionResult> => {
     try {
       let enhancedQuestion = await enhanceQuestionWithAttachments(
@@ -113,19 +129,32 @@ async function executeResearchQuestions(
         maxTokens: tokensPerQuestion,
       });
 
-      if (response.error) {
-        return { question: q.question, content: response.content || '', success: false, error: response.error.message };
-      }
-
-      return {
+      const result = response.error
+        ? { question: q.question, content: response.content || '', success: false, error: response.error.message }
+        : {
         question: q.question,
         content: response.content || '',
         success: !!response.content,
         tokensUsed: response.usage?.totalTokens,
         error: response.content ? undefined : 'Empty response received',
       };
+
+      completed += 1;
+      await reporter.progress(
+        30 + Math.round((completed / questions.length) * 55),
+        100,
+        `Completed research question ${completed}/${questions.length}`,
+      );
+
+      return result;
     } catch (error) {
       const structuredError = classifyError(error);
+      completed += 1;
+      await reporter.progress(
+        30 + Math.round((completed / questions.length) * 55),
+        100,
+        `Completed research question ${completed}/${questions.length}`,
+      );
       return { question: q.question, content: '', success: false, error: structuredError.message };
     }
   }, 3);
@@ -155,7 +184,7 @@ function formatResearchOutput(
   totalQuestions: number,
   tokensPerQuestion: number,
   executionTime: number,
-): { content: string; structuredContent: object } {
+): ToolExecutionResult<DeepResearchOutput> {
   const successful = results.filter(r => r.success);
   const failed = results.filter(r => !r.success);
   const totalTokens = successful.reduce((sum, r) => sum + (r.tokensUsed || 0), 0);
@@ -170,10 +199,10 @@ function formatResearchOutput(
   });
 
   const nextSteps = [
-    successful.length > 0 ? 'SCRAPE CITED SOURCES: scrape_links(urls=[...URLs cited in research above...], use_llm=true, what_to_extract="Extract evidence | data | methodology | conclusions") — verify research citations with primary sources' : null,
-    successful.length > 0 ? 'COMMUNITY VALIDATION: search_reddit(queries=["topic findings", "topic real experience", "topic criticism"]) — check if community agrees with research findings' : null,
-    successful.length > 0 ? 'ITERATE: If research revealed gaps or new questions, run deep_research again with refined questions targeting those gaps' : null,
-    successful.length > 0 ? 'WEB VERIFY: web_search(keywords=["specific claim from research", "topic latest data 2025"]) — if claims need independent verification' : null,
+    successful.length > 0 ? 'SCRAPE CITED SOURCES: scrape-links(urls=[...URLs cited in research above...], use_llm=true, what_to_extract="Extract evidence | data | methodology | conclusions") — verify research citations with primary sources' : null,
+    successful.length > 0 ? 'COMMUNITY VALIDATION: search-reddit(queries=["topic findings", "topic real experience", "topic criticism"]) — check if community agrees with research findings' : null,
+    successful.length > 0 ? 'ITERATE: If research revealed gaps or new questions, run deep-research again with refined questions targeting those gaps' : null,
+    successful.length > 0 ? 'WEB VERIFY: web-search(keywords=["specific claim from research", "topic latest data 2025"]) — if claims need independent verification' : null,
     failed.length > 0 ? 'Retry failed questions with more specific context' : null,
   ].filter(Boolean) as string[];
 
@@ -188,17 +217,14 @@ function formatResearchOutput(
     },
   });
 
-  return {
-    content: formattedContent,
-    structuredContent: {
-      totalQuestions,
-      successful: successful.length,
-      failed: failed.length,
-      tokensPerQuestion,
-      totalTokensUsed: totalTokens,
-      results,
-    },
-  };
+  return toolSuccess(formattedContent, {
+    totalQuestions,
+    successful: successful.length,
+    failed: failed.length,
+    tokensPerQuestion,
+    totalTokensUsed: totalTokens,
+    results,
+  });
 }
 
 /**
@@ -206,48 +232,91 @@ function formatResearchOutput(
  * NEVER throws - always returns a valid response
  */
 export async function handleDeepResearch(
-  params: DeepResearchParams
-): Promise<{ content: string; structuredContent: object }> {
+  params: DeepResearchParams,
+  reporter: ToolReporter = NOOP_REPORTER,
+): Promise<ToolExecutionResult<DeepResearchOutput>> {
   const startTime = Date.now();
   const questions = params.questions || [];
 
   const validationError = validateQuestionCount(questions.length);
   if (validationError) {
-    return {
-      content: formatError({ ...validationError, toolName: 'deep_research' }),
-      structuredContent: { error: true, message: validationError.message },
-    };
+    return toolFailure(formatError({ ...validationError, toolName: 'deep-research' }));
   }
 
   const tokensPerQuestion = calculateTokenAllocation(questions.length, TOKEN_BUDGETS.RESEARCH);
   mcpLog('info', `Starting batch research: ${questions.length} questions, ${tokensPerQuestion.toLocaleString()} tokens/question`, 'research');
+  await reporter.log(
+    'info',
+    `Starting deep research for ${questions.length} question(s) with ${tokensPerQuestion.toLocaleString()} tokens/question`,
+  );
+  await reporter.progress(15, 100, 'Initializing research client');
 
   let client: ResearchClient;
   try {
     client = new ResearchClient();
   } catch (error) {
     const err = classifyError(error);
-    return {
-      content: formatError({
+    return toolFailure(
+      formatError({
         code: 'CLIENT_INIT_FAILED',
         message: `Failed to initialize research client: ${err.message}`,
-        toolName: 'deep_research',
+        toolName: 'deep-research',
         howToFix: ['Check OPENROUTER_API_KEY is set'],
         alternatives: [
-          'web_search(keywords=["topic best practices", "topic guide", "topic comparison 2025"]) — uses Serper API (different key), search for information directly',
-          'search_reddit(queries=["topic recommendations", "topic experience", "topic discussion"]) — uses Serper API, get community perspective',
-          'scrape_links(urls=[...any relevant URLs...], use_llm=true) — if you have URLs, scrape them for content (uses Firecrawl + OpenRouter, may also fail if OpenRouter key is the issue)',
+          'web-search(keywords=["topic best practices", "topic guide", "topic comparison 2025"]) — uses Serper API (different key), search for information directly',
+          'search-reddit(queries=["topic recommendations", "topic experience", "topic discussion"]) — uses Serper API, get community perspective',
+          'scrape-links(urls=[...any relevant URLs...], use_llm=true) — if you have URLs, scrape them for content (uses Firecrawl + OpenRouter, may also fail if OpenRouter key is the issue)',
         ],
       }),
-      structuredContent: { error: true, message: `Failed to initialize: ${err.message}` },
-    };
+    );
   }
 
   const fileService = new FileAttachmentService();
-  const results = await executeResearchQuestions(questions, client, fileService, tokensPerQuestion);
+  await reporter.progress(25, 100, 'Dispatching research questions');
+  const results = await executeResearchQuestions(
+    questions,
+    client,
+    fileService,
+    tokensPerQuestion,
+    reporter,
+  );
   const executionTime = Date.now() - startTime;
 
   mcpLog('info', `Research completed: ${results.filter(r => r.success).length}/${questions.length} successful, ${results.filter(r => r.success).reduce((s, r) => s + (r.tokensUsed || 0), 0).toLocaleString()} tokens`, 'research');
+  await reporter.log(
+    'info',
+    `Research completed with ${results.filter(r => r.success).length} successful question(s)`,
+  );
 
   return formatResearchOutput(results, questions.length, tokensPerQuestion, executionTime);
+}
+
+export function registerDeepResearchTool(server: MCPServer): void {
+  server.tool(
+    {
+      name: 'deep-research',
+      title: 'Deep Research',
+      description:
+        'Run parallel deep research questions with optional file attachments and source-grounded synthesis.',
+      schema: deepResearchParamsSchema,
+      outputSchema: deepResearchOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args, ctx) => {
+      if (!getCapabilities().deepResearch) {
+        return toToolResponse(toolFailure(getMissingEnvMessage('deepResearch')));
+      }
+
+      const reporter = createToolReporter(ctx, 'deep-research');
+      const result = await handleDeepResearch(args, reporter);
+
+      await reporter.progress(100, 100, result.isError ? 'Research failed' : 'Research complete');
+      return toToolResponse(result);
+    },
+  );
 }

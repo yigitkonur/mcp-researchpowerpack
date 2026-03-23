@@ -1,28 +1,26 @@
 {
-  "name": "mcp-researchpowerpack",
+  "name": "mcp-researchpowerpack-http",
   "version": "3.9.5",
   "description": "The ultimate research MCP toolkit: Reddit mining, web search with CTR aggregation, AI-powered deep research, and intelligent web scraping - all in one modular package",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "mcp-research-powerpack": "dist/index.js",
-    "research-powerpack-mcp": "dist/index.js"
+    "mcp-researchpowerpack-http": "dist/index.js",
+    "mcp-research-powerpack-http": "dist/index.js"
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc && cp -r src/config/yaml dist/config/",
-    "prepublishOnly": "pnpm build",
-    "dev": "tsx src/index.ts",
-    "start": "node dist/index.js",
+    "build": "mcp-use build",
+    "dev": "mcp-use dev",
+    "start": "mcp-use start",
+    "deploy": "mcp-use deploy",
+    "inspect": "npx @mcp-use/inspector --url http://localhost:3000/mcp",
     "typecheck": "tsc --noEmit",
-    "test:web-search": "tsx tests/test-web-search.ts",
-    "test:reddit-search": "tsx tests/test-reddit-search.ts",
-    "test:scrape-links": "tsx tests/test-scrape-links.ts",
-    "test:deep-research": "tsx tests/test-deep-research.ts",
-    "test:all": "pnpm test:web-search && pnpm test:reddit-search && pnpm test:scrape-links && pnpm test:deep-research",
-    "test:check": "tsx tests/check-setup.ts"
+    "test": "pnpm test:http",
+    "test:http": "tsx tests/http-server.ts",
+    "prepublishOnly": "pnpm build && pnpm typecheck && pnpm test:http"
   },
   "keywords": [
     "mcp",
@@ -38,36 +36,34 @@
     "anthropic",
     "openrouter",
     "scraping",
-    "research-powerpack"
+    "research-powerpack",
+    "http-mcp"
   ],
   "author": "Yiğit Konur <yigit35@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yigitkonur/mcp-research-powerpack.git"
+    "url": "git+https://github.com/yigitkonur/mcp-researchpowerpack-http.git"
   },
-  "homepage": "https://github.com/yigitkonur/mcp-research-powerpack#readme",
+  "homepage": "https://github.com/yigitkonur/mcp-researchpowerpack-http#readme",
   "bugs": {
-    "url": "https://github.com/yigitkonur/mcp-research-powerpack/issues"
+    "url": "https://github.com/yigitkonur/mcp-researchpowerpack-http/issues"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.18.1",
-    "agents": "^0.3.10",
+    "mcp-use": "1.22.0",
     "openai": "^4.77.0",
+    "redis": "^5.11.0",
     "turndown": "^7.2.2",
-    "yaml": "^2.7.0",
-    "zod": "^3.24.1",
-    "zod-to-json-schema": "^3.24.1"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@mcp-use/cli": "2.20.0",
     "@types/node": "^22.0.0",
     "@types/turndown": "^5.0.6",
-    "dotenv": "^17.2.3",
     "tsx": "^4.19.0",
-    "typescript": "^5.6.0",
-    "wrangler": "^4.63.0"
+    "typescript": "^5.6.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": "^20.19.0 || >=22.12.0"
   }
 }

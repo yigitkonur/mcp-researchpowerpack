@@ -3,7 +3,15 @@
  * NEVER throws - always returns structured response for graceful degradation
  */
 
-import type { WebSearchParams, WebSearchOutput } from '../schemas/web-search.js';
+import type { MCPServer } from 'mcp-use/server';
+
+import { getCapabilities, getMissingEnvMessage } from '../config/index.js';
+import {
+  webSearchOutputSchema,
+  webSearchParamsSchema,
+  type WebSearchParams,
+  type WebSearchOutput,
+} from '../schemas/web-search.js';
 import { SearchClient } from '../clients/search.js';
 import {
   aggregateAndRank,
@@ -13,13 +21,22 @@ import {
   markConsensus,
 } from '../utils/url-aggregator.js';
 import { CTR_WEIGHTS } from '../config/index.js';
-import { classifyError, MCP_ERROR_CODES, type McpErrorCodeType } from '../utils/errors.js';
+import { classifyError } from '../utils/errors.js';
 import {
   mcpLog,
   formatSuccess,
   formatError,
   formatDuration,
 } from './utils.js';
+import {
+  createToolReporter,
+  NOOP_REPORTER,
+  toolFailure,
+  toolSuccess,
+  toToolResponse,
+  type ToolExecutionResult,
+  type ToolReporter,
+} from './mcp-helpers.js';
 
 function getPositionScore(position: number): number {
   if (position >= 1 && position <= 10) {
@@ -156,10 +173,10 @@ function buildSearchNextSteps(
     : rankedUrls.slice(0, 5).map(u => `"${u.url}"`).join(', ');
 
   return [
-    `MUST DO: scrape_links(urls=[${topConsensusUrls}], use_llm=true, what_to_extract="Extract key findings | recommendations | data | evidence | comparisons") — searching only gives URLs, scraping gets the actual content`,
-    'COMMUNITY CHECK: search_reddit(queries=["topic recommendations", "topic best 2025", "topic vs alternatives"]) — get real user experiences',
+    `MUST DO: scrape-links(urls=[${topConsensusUrls}], use_llm=true, what_to_extract="Extract key findings | recommendations | data | evidence | comparisons") — searching only gives URLs, scraping gets the actual content`,
+    'COMMUNITY CHECK: search-reddit(queries=["topic recommendations", "topic best 2025", "topic vs alternatives"]) — get real user experiences',
     'ITERATE: If results are insufficient, search again with different keywords from "Related" suggestions above',
-    'SYNTHESIZE (only after scraping + Reddit): deep_research(questions=[{question: "Based on scraped content and community feedback..."}])',
+    'SYNTHESIZE (only after scraping + Reddit): deep-research(questions=[{question: "Based on scraped content and community feedback..."}])',
   ];
 }
 
@@ -172,7 +189,7 @@ function formatSearchOutput(
   consensusUrlCount: number,
   executionTime: number,
   totalKeywords: number,
-): { content: string; structuredContent: WebSearchOutput } {
+): ToolExecutionResult<WebSearchOutput> {
   let markdown = consensusSection + perQuerySection;
 
   markdown += '\n\n---\n\n**Next Steps (DO ALL — research is a loop, not a single call):**\n';
@@ -189,62 +206,67 @@ function formatSearchOutput(
     frequency_threshold: aggregation.frequencyThreshold,
   };
 
-  return { content: markdown, structuredContent: { content: markdown, metadata } };
+  return toolSuccess(markdown, { content: markdown, metadata });
 }
 
 function buildWebSearchError(
   error: unknown,
   params: WebSearchParams,
   startTime: number,
-): { content: string; structuredContent: WebSearchOutput } {
+): ToolExecutionResult<WebSearchOutput> {
   const structuredError = classifyError(error);
   const executionTime = Date.now() - startTime;
 
-  mcpLog('error', `web_search: ${structuredError.message}`, 'search');
+  mcpLog('error', `web-search: ${structuredError.message}`, 'search');
 
   const errorContent = formatError({
     code: structuredError.code,
     message: structuredError.message,
     retryable: structuredError.retryable,
-    toolName: 'web_search',
+    toolName: 'web-search',
     howToFix: ['Verify SERPER_API_KEY is set correctly'],
     alternatives: [
-      'search_reddit(queries=["topic recommendations", "topic best practices", "topic vs alternatives"]) — Reddit search uses the same API but may work; also provides community perspective',
-      'deep_research(questions=[{question: "What are the key findings, best practices, and recommendations for [topic]?"}]) — uses OpenRouter API (different key), not affected by this error',
-      'scrape_links(urls=[...any URLs you already have...], use_llm=true) — if you have URLs from prior steps, scrape them now instead of searching',
+      'search-reddit(queries=["topic recommendations", "topic best practices", "topic vs alternatives"]) — Reddit search uses the same API but may work; also provides community perspective',
+      'deep-research(questions=[{question: "What are the key findings, best practices, and recommendations for [topic]?"}]) — uses OpenRouter API (different key), not affected by this error',
+      'scrape-links(urls=[...any URLs you already have...], use_llm=true) — if you have URLs from prior steps, scrape them now instead of searching',
     ],
   });
 
-  return {
-    content: errorContent,
-    structuredContent: {
-      content: errorContent,
-      metadata: {
-        total_keywords: params.keywords.length,
-        total_results: 0,
-        execution_time_ms: executionTime,
-        errorCode: structuredError.code,
-      },
-    },
-  };
+  return toolFailure(
+    `${errorContent}\n\nExecution time: ${formatDuration(executionTime)}\nKeywords: ${params.keywords.length}`,
+  );
 }
 
 export async function handleWebSearch(
-  params: WebSearchParams
-): Promise<{ content: string; structuredContent: WebSearchOutput }> {
+  params: WebSearchParams,
+  reporter: ToolReporter = NOOP_REPORTER,
+): Promise<ToolExecutionResult<WebSearchOutput>> {
   const startTime = Date.now();
 
   try {
     mcpLog('info', `Searching for ${params.keywords.length} keyword(s)`, 'search');
+    await reporter.log('info', `Searching for ${params.keywords.length} keyword(s)`);
+    await reporter.progress(15, 100, 'Submitting search queries');
 
     const response = await executeSearches(params.keywords);
+    await reporter.progress(50, 100, 'Collected search results');
+
     const { aggregation, urlLookup, consensusUrls } = processAndRankResults(response);
+    await reporter.log(
+      'info',
+      `Collected ${aggregation.totalUniqueUrls} unique URLs across ${response.totalKeywords} queries`,
+    );
 
     const consensusSection = buildConsensusSection(consensusUrls, params.keywords, aggregation);
     const { markdown: perQuerySection, totalResults } = buildPerQuerySection(response, urlLookup);
+    await reporter.progress(80, 100, 'Ranking and formatting search results');
 
     const executionTime = Date.now() - startTime;
     mcpLog('info', `Search completed: ${totalResults} results, ${aggregation.totalUniqueUrls} unique URLs, ${consensusUrls.length} consensus`, 'search');
+    await reporter.log(
+      'info',
+      `Search completed with ${totalResults} ranked results and ${consensusUrls.length} consensus URL(s)`,
+    );
 
     const nextSteps = buildSearchNextSteps(consensusUrls, aggregation.rankedUrls);
 
@@ -255,4 +277,34 @@ export async function handleWebSearch(
   } catch (error) {
     return buildWebSearchError(error, params, startTime);
   }
+}
+
+export function registerWebSearchTool(server: MCPServer): void {
+  server.tool(
+    {
+      name: 'web-search',
+      title: 'Web Search',
+      description:
+        'Run parallel Google searches across 3-100 keywords and return ranked URLs for follow-up scraping.',
+      schema: webSearchParamsSchema,
+      outputSchema: webSearchOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args, ctx) => {
+      if (!getCapabilities().search) {
+        return toToolResponse(toolFailure(getMissingEnvMessage('search')));
+      }
+
+      const reporter = createToolReporter(ctx, 'web-search');
+      const result = await handleWebSearch(args, reporter);
+
+      await reporter.progress(100, 100, result.isError ? 'Search failed' : 'Search complete');
+      return toToolResponse(result);
+    },
+  );
 }
