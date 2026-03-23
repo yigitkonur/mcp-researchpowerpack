@@ -53,6 +53,20 @@ function resolvePort(): number {
   return parsePort(process.env.PORT, DEFAULT_PORT);
 }
 
+function resolveHost(): string {
+  const explicitHost = process.env.HOST?.trim();
+  if (explicitHost) {
+    return explicitHost;
+  }
+
+  // Cloud runtimes typically inject PORT and expect the process to listen on all interfaces.
+  if (process.env.PORT?.trim()) {
+    return '0.0.0.0';
+  }
+
+  return LOCAL_DEFAULT_HOST;
+}
+
 function buildCors(allowedOrigins: string[] | undefined): ServerConfig['cors'] {
   if (!allowedOrigins || allowedOrigins.length === 0) {
     return undefined;
@@ -96,14 +110,10 @@ function normalizeOrigin(value: string, envName: string): string {
   }
 }
 
-function resolveAllowedOrigins(baseUrl: string | undefined): string[] | undefined {
+function resolveAllowedOrigins(): string[] | undefined {
   const explicitOrigins = parseCsvEnv(process.env.ALLOWED_ORIGINS);
   if (explicitOrigins && explicitOrigins.length > 0) {
     return explicitOrigins.map(origin => normalizeOrigin(origin, 'ALLOWED_ORIGINS'));
-  }
-
-  if (baseUrl) {
-    return [normalizeOrigin(baseUrl, 'MCP_URL')];
   }
 
   return undefined;
@@ -178,10 +188,10 @@ async function main(): Promise<void> {
   configureLogging();
 
   const isProduction = process.env.NODE_ENV === 'production';
-  const host = process.env.HOST?.trim() || LOCAL_DEFAULT_HOST;
+  const host = resolveHost();
   const port = resolvePort();
   const baseUrl = process.env.MCP_URL?.trim() || undefined;
-  const allowedOrigins = resolveAllowedOrigins(baseUrl);
+  const allowedOrigins = resolveAllowedOrigins();
 
   assertOriginProtection(isProduction, allowedOrigins);
 
