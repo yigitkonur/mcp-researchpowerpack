@@ -70,7 +70,7 @@ Copy `.env.example` and set only the keys you need. Missing provider keys do not
 | `ALLOWED_ORIGINS` | unset | Comma-separated allowed origins / host validation list |
 | `REDIS_URL` | unset | Enables Redis-backed sessions and distributed SSE streams |
 
-Hosted deployments must set either `ALLOWED_ORIGINS` or `MCP_URL`. In `NODE_ENV=production`, the server refuses to start without one of them.
+Hosted deployments can boot without `ALLOWED_ORIGINS`, but production host validation stays disabled until you set it. For Manufact Cloud, the practical flow is: deploy once to get the assigned URL, then set `ALLOWED_ORIGINS` to that URL or to your custom domain and redeploy.
 
 ### Provider settings
 
@@ -129,8 +129,10 @@ After deploy, use the returned hosted URL:
 
 Set one of the following in the hosted environment before starting the server:
 
-- `MCP_URL=https://<deployment>.deploy.mcp-use.com`
-- `ALLOWED_ORIGINS=https://<deployment>.deploy.mcp-use.com`
+- First deploy without `ALLOWED_ORIGINS` if the public URL is not known yet.
+- After Manufact assigns the deployment URL, set:
+  - `MCP_URL=https://<deployment>.deploy.mcp-use.com`
+  - `ALLOWED_ORIGINS=https://<deployment>.deploy.mcp-use.com`
 
 ### Generic self-hosting
 

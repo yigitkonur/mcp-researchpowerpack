@@ -119,17 +119,6 @@ function resolveAllowedOrigins(): string[] | undefined {
   return undefined;
 }
 
-function assertOriginProtection(
-  isProduction: boolean,
-  allowedOrigins: string[] | undefined,
-): void {
-  if (isProduction && (!allowedOrigins || allowedOrigins.length === 0)) {
-    throw new Error(
-      'Production HTTP deployments must set ALLOWED_ORIGINS or MCP_URL for host validation.',
-    );
-  }
-}
-
 async function buildSessionConfig(): Promise<{
   sessionConfig: Pick<ServerConfig, 'sessionStore' | 'streamManager'>;
   cleanupFns: CleanupFn[];
@@ -193,14 +182,17 @@ async function main(): Promise<void> {
   const baseUrl = process.env.MCP_URL?.trim() || undefined;
   const allowedOrigins = resolveAllowedOrigins();
 
-  assertOriginProtection(isProduction, allowedOrigins);
-
   const { sessionConfig, cleanupFns } = await buildSessionConfig();
 
   startupLogger.info(`Starting ${SERVER.NAME} v${SERVER.VERSION}`);
   startupLogger.info(`Binding HTTP server to ${host}:${port}`);
   if (allowedOrigins && allowedOrigins.length > 0) {
     startupLogger.info(`Host validation enabled for origins: ${allowedOrigins.join(', ')}`);
+  } else if (isProduction) {
+    startupLogger.warn(
+      'Host validation is disabled because ALLOWED_ORIGINS is not set. ' +
+      'Set ALLOWED_ORIGINS to the public deployment URL or custom domain after the first deploy.',
+    );
   } else {
     startupLogger.info('Host validation disabled for local development');
   }

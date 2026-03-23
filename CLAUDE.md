@@ -48,7 +48,7 @@ Server:
 - `ALLOWED_ORIGINS`
 - `REDIS_URL`
 
-Production boot now requires either `ALLOWED_ORIGINS` or `MCP_URL` so host validation is enabled.
+Production can boot without `ALLOWED_ORIGINS`, but host validation stays disabled until it is set. For Manufact Cloud, deploy once to get the assigned URL, then set `ALLOWED_ORIGINS` to that URL or your custom domain and redeploy.
 
 Providers:
 
