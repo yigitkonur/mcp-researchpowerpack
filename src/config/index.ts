@@ -198,8 +198,8 @@ export const SCRAPER = {
   MAX_URLS: 50,
   RETRY_COUNT: 3,
   RETRY_DELAYS: [2000, 4000, 8000] as const,
-  EXTRACTION_PREFIX: 'Extract ONLY from document — never hallucinate. For structured data (pricing, specs, features) → markdown table. Otherwise → tight bullet points. No intro, no confirmation message, no meta-commentary.',
-  EXTRACTION_SUFFIX: 'Output grounded info only. First line = content, not preamble.',
+  EXTRACTION_PREFIX: 'Extract from document only — never hallucinate or add external knowledge.',
+  EXTRACTION_SUFFIX: 'First line = content, not preamble. No confirmation messages.',
 } as const;
 
 // ============================================================================
@@ -207,7 +207,7 @@ export const SCRAPER = {
 // ============================================================================
 
 export const RESEARCH_PROMPTS = {
-  SUFFIX: `CONSTRAINTS: No restating the question. No hedging preambles. Cite sources inline [source]. NEVER hallucinate — only report what sources confirm.`,
+  SUFFIX: `CONSTRAINTS: No restating the question. Cite sources inline [source]. NEVER hallucinate — only report what sources confirm.`,
 } as const;
 
 // ============================================================================

@@ -72,26 +72,22 @@ function processAndRankResults(response: SearchResponse): {
   consensusUrls: SearchAggregation['rankedUrls'];
 } {
   const aggregation = aggregateAndRank(response.searches, 5);
+  // Build lookup from ALL ranked URLs so per-query entries can show consensus info
   const urlLookup = buildUrlLookup(aggregation.rankedUrls);
-  const consensusUrls = aggregation.rankedUrls.filter(
-    url => url.frequency >= aggregation.frequencyThreshold,
-  );
+  const consensusUrls = aggregation.rankedUrls.filter(u => u.isConsensus);
   return { aggregation, urlLookup, consensusUrls };
 }
 
 function buildConsensusSection(
-  consensusUrls: SearchAggregation['rankedUrls'],
+  _consensusUrls: SearchAggregation['rankedUrls'],
   keywords: string[],
   aggregation: SearchAggregation,
 ): string {
-  if (consensusUrls.length > 0) {
-    return generateEnhancedOutput(
-      consensusUrls, keywords, aggregation.totalUniqueUrls,
-      aggregation.frequencyThreshold, aggregation.thresholdNote,
-    ) + '\n---\n\n';
-  }
-  return `## The Perfect Search Results (Aggregated from ${keywords.length} Queries)\n\n` +
-    `> *No high-consensus URLs found across searches. Results may be highly diverse.*\n\n---\n\n`;
+  // Always show all ranked URLs (consensus-marked within)
+  return generateEnhancedOutput(
+    aggregation.rankedUrls, keywords, aggregation.totalUniqueUrls,
+    aggregation.frequencyThreshold, aggregation.thresholdNote,
+  ) + '\n---\n\n';
 }
 
 function formatSearchResultEntry(
@@ -110,11 +106,9 @@ function formatSearchResultEntry(
   let entry = `${position}. **[${result.title}](${result.link})** — Position ${position} | Score: ${positionScore.toFixed(1)} | Consensus: ${consensusInfo}\n`;
 
   if (result.snippet) {
-    let snippet = result.snippet;
-    if (snippet.length > 150) snippet = snippet.substring(0, 147) + '...';
     entry += result.date
-      ? `   - *${result.date}* — ${snippet}\n`
-      : `   - ${snippet}\n`;
+      ? `   - *${result.date}* — ${result.snippet}\n`
+      : `   - ${result.snippet}\n`;
   }
 
   entry += '\n';
@@ -125,65 +119,34 @@ function buildPerQuerySection(
   response: SearchResponse,
   urlLookup: ReturnType<typeof buildUrlLookup>,
 ): { markdown: string; totalResults: number } {
-  const MAX_QUERIES_SHOWN = 15;
-  const MAX_RESULTS_PER_QUERY = response.totalKeywords > 10 ? 5 : 10;
-  const queriesToShow = response.searches.slice(0, MAX_QUERIES_SHOWN);
-  const queriesOmitted = response.searches.length - queriesToShow.length;
-
-  let markdown = `## 📊 Full Search Results by Query`;
-  if (queriesOmitted > 0) {
-    markdown += ` (showing ${queriesToShow.length} of ${response.searches.length})`;
-  }
-  markdown += `\n\n`;
+  let markdown = `## 📊 Full Search Results by Query\n\n`;
 
   let totalResults = 0;
 
-  queriesToShow.forEach((search, index) => {
+  response.searches.forEach((search, index) => {
     markdown += `### Query ${index + 1}: "${search.keyword}"\n\n`;
 
-    search.results.slice(0, MAX_RESULTS_PER_QUERY).forEach((result, resultIndex) => {
+    search.results.forEach((result, resultIndex) => {
       markdown += formatSearchResultEntry(result, resultIndex + 1, urlLookup);
       totalResults++;
     });
 
     if (search.related && search.related.length > 0) {
       const relatedSuggestions = search.related
-        .slice(0, 5)
         .map((r: string) => `\`${r}\``)
         .join(', ');
       markdown += `*Related:* ${relatedSuggestions}\n\n`;
     }
 
-    if (index < queriesToShow.length - 1) markdown += `---\n\n`;
+    if (index < response.searches.length - 1) markdown += `---\n\n`;
   });
 
-  if (queriesOmitted > 0) {
-    markdown += `\n---\n\n> *${queriesOmitted} additional queries not shown. Consensus URLs above include all ${response.searches.length} queries.*\n`;
-  }
-
   return { markdown, totalResults };
-}
-
-function buildSearchNextSteps(
-  consensusUrls: SearchAggregation['rankedUrls'],
-  rankedUrls: SearchAggregation['rankedUrls'],
-): string[] {
-  const topConsensusUrls = consensusUrls.length > 0
-    ? consensusUrls.slice(0, 5).map(u => `"${u.url}"`).join(', ')
-    : rankedUrls.slice(0, 5).map(u => `"${u.url}"`).join(', ');
-
-  return [
-    `MUST DO: scrape-links(urls=[${topConsensusUrls}], use_llm=true, what_to_extract="Extract key findings | recommendations | data | evidence | comparisons") — searching only gives URLs, scraping gets the actual content`,
-    'COMMUNITY CHECK: search-reddit(queries=["topic recommendations", "topic best 2025", "topic vs alternatives"]) — get real user experiences',
-    'ITERATE: If results are insufficient, search again with different keywords from "Related" suggestions above',
-    'SYNTHESIZE (only after scraping + Reddit): deep-research(questions=[{question: "Based on scraped content and community feedback..."}])',
-  ];
 }
 
 function formatSearchOutput(
   consensusSection: string,
   perQuerySection: string,
-  nextSteps: string[],
   totalResults: number,
   aggregation: SearchAggregation,
   consensusUrlCount: number,
@@ -191,9 +154,6 @@ function formatSearchOutput(
   totalKeywords: number,
 ): ToolExecutionResult<WebSearchOutput> {
   let markdown = consensusSection + perQuerySection;
-
-  markdown += '\n\n---\n\n**Next Steps (DO ALL — research is a loop, not a single call):**\n';
-  nextSteps.forEach((step, i) => { markdown += `${i + 1}. ${step}\n`; });
 
   markdown += `\n---\n*${formatDuration(executionTime)} | ${aggregation.totalUniqueUrls} unique URLs | ${consensusUrlCount} consensus*`;
 
@@ -268,10 +228,8 @@ export async function handleWebSearch(
       `Search completed with ${totalResults} ranked results and ${consensusUrls.length} consensus URL(s)`,
     );
 
-    const nextSteps = buildSearchNextSteps(consensusUrls, aggregation.rankedUrls);
-
     return formatSearchOutput(
-      consensusSection, perQuerySection, nextSteps, totalResults,
+      consensusSection, perQuerySection, totalResults,
       aggregation, consensusUrls.length, executionTime, response.totalKeywords,
     );
   } catch (error) {
@@ -285,7 +243,7 @@ export function registerWebSearchTool(server: MCPServer): void {
       name: 'web-search',
       title: 'Web Search',
       description:
-        'Run parallel Google searches across 3-100 keywords and return ranked URLs for follow-up scraping.',
+        'Run parallel Google searches across 1-100 keywords and return ranked URLs for follow-up scraping.',
       schema: webSearchParamsSchema,
       outputSchema: webSearchOutputSchema,
       annotations: {

@@ -6,14 +6,6 @@ import { access, readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { pMap } from '../utils/concurrency.js';
 
-/** Maximum lines shown before smart truncation kicks in */
-const TRUNCATION_THRESHOLD = 600 as const;
-
-/** Number of leading lines to keep when truncating */
-const TRUNCATION_HEAD_LINES = 500 as const;
-
-/** Number of trailing lines to keep when truncating */
-const TRUNCATION_TAIL_LINES = 100 as const;
 
 /** Default concurrency for parallel file reads */
 const FILE_READ_CONCURRENCY = 5 as const;
@@ -127,35 +119,14 @@ export class FileAttachmentService {
   }
 
   /**
-   * Format code block with line numbers and smart truncation
+   * Format code block with line numbers
    */
   private formatCodeBlock(lines: string[], language: string, startIdx: number): string {
     const parts: string[] = [`\`\`\`${language.toLowerCase()}\n`];
 
-    // Smart truncation for very large files (keep first N lines + last M lines)
-    if (lines.length > TRUNCATION_THRESHOLD) {
-      // First N lines
-      const firstLines = lines.slice(0, TRUNCATION_HEAD_LINES);
-      for (let idx = 0; idx < firstLines.length; idx++) {
-        const lineNumber = startIdx + idx + 1;
-        parts.push(`${lineNumber.toString().padStart(4, ' ')}: ${firstLines[idx]}\n`);
-      }
-
-      // Truncation marker
-      parts.push(`\n... [${lines.length - TRUNCATION_THRESHOLD} lines truncated for brevity] ...\n\n`);
-
-      // Last M lines
-      const lastLines = lines.slice(-TRUNCATION_TAIL_LINES);
-      for (let idx = 0; idx < lastLines.length; idx++) {
-        const lineNumber = startIdx + lines.length - TRUNCATION_TAIL_LINES + idx + 1;
-        parts.push(`${lineNumber.toString().padStart(4, ' ')}: ${lastLines[idx]}\n`);
-      }
-    } else {
-      // Show all lines with numbers
-      for (let idx = 0; idx < lines.length; idx++) {
-        const lineNumber = startIdx + idx + 1;
-        parts.push(`${lineNumber.toString().padStart(4, ' ')}: ${lines[idx]}\n`);
-      }
+    for (let idx = 0; idx < lines.length; idx++) {
+      const lineNumber = startIdx + idx + 1;
+      parts.push(`${lineNumber.toString().padStart(4, ' ')}: ${lines[idx]}\n`);
     }
 
     parts.push('```');

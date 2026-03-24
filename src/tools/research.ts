@@ -52,9 +52,8 @@ const SYSTEM_PROMPT = `Expert research engine. Multi-source: docs, papers, blogs
 
 FORMAT RULES:
 - For comparisons/features/structured data → use markdown table |Col|Col|Col|
-- For narrative/diagnostic/explanation → tight numbered bullets, no prose paragraphs
-- No intro, no greeting, no conclusion, no meta-commentary
-- No filler phrases: "it is worth noting", "overall", "in conclusion", "importantly"
+- No intro, no greeting, no conclusion
+- Every claim must cite a source inline [source]
 - Every sentence = fact, data point, or actionable insight
 - First line of output = content (never a preamble)`;
 
@@ -198,23 +197,10 @@ function formatResearchOutput(
     extras: { 'Total tokens used': totalTokens.toLocaleString() },
   });
 
-  const nextSteps = [
-    successful.length > 0 ? 'SCRAPE CITED SOURCES: scrape-links(urls=[...URLs cited in research above...], use_llm=true, what_to_extract="Extract evidence | data | methodology | conclusions") — verify research citations with primary sources' : null,
-    successful.length > 0 ? 'COMMUNITY VALIDATION: search-reddit(queries=["topic findings", "topic real experience", "topic criticism"]) — check if community agrees with research findings' : null,
-    successful.length > 0 ? 'ITERATE: If research revealed gaps or new questions, run deep-research again with refined questions targeting those gaps' : null,
-    successful.length > 0 ? 'WEB VERIFY: web-search(keywords=["specific claim from research", "topic latest data 2025"]) — if claims need independent verification' : null,
-    failed.length > 0 ? 'Retry failed questions with more specific context' : null,
-  ].filter(Boolean) as string[];
-
   const formattedContent = formatSuccess({
     title: `Research Complete (${successful.length}/${totalQuestions})`,
     summary: batchHeader,
     data: buildQuestionsData(results),
-    nextSteps,
-    metadata: {
-      'Execution time': formatDuration(executionTime),
-      'Token budget': TOKEN_BUDGETS.RESEARCH.toLocaleString(),
-    },
   });
 
   return toolSuccess(formattedContent, {
@@ -297,7 +283,7 @@ export function registerDeepResearchTool(server: MCPServer): void {
       name: 'deep-research',
       title: 'Deep Research',
       description:
-        'Run parallel deep research questions with optional file attachments and source-grounded synthesis.',
+        'Run 1-10 parallel deep research questions with optional file attachments and source-grounded synthesis.',
       schema: deepResearchParamsSchema,
       outputSchema: deepResearchOutputSchema,
       annotations: {
