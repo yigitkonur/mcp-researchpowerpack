@@ -7,7 +7,7 @@ import type { MCPServer } from 'mcp-use/server';
 import { z } from 'zod';
 
 import { SearchClient } from '../clients/search.js';
-import { RedditClient, calculateCommentAllocation, type PostResult, type Comment } from '../clients/reddit.js';
+import { RedditClient, type PostResult, type Comment } from '../clients/reddit.js';
 import { aggregateAndRankReddit, generateRedditEnhancedOutput } from '../utils/url-aggregator.js';
 import { REDDIT, getCapabilities, getMissingEnvMessage, parseEnv } from '../config/index.js';
 import { classifyError } from '../utils/errors.js';
@@ -68,13 +68,6 @@ export const getRedditPostParamsSchema = z.object({
     .boolean()
     .default(true)
     .describe('Whether to fetch Reddit comments. Keep true unless only titles/selftext are needed.'),
-  max_comments: z
-    .number()
-    .int()
-    .min(1, { message: 'get-reddit-post: max_comments must be at least 1' })
-    .max(1000, { message: 'get-reddit-post: max_comments cannot exceed 1000' })
-    .default(100)
-    .describe('Optional comment budget override across the fetched posts.'),
   use_llm: z
     .boolean()
     .default(false)
@@ -133,11 +126,16 @@ export const getRedditPostOutputSchema = z.object({
     fetch_comments: z
       .boolean()
       .describe('Whether comments were fetched for each post.'),
-    comments_per_post: z
+    max_words_per_post: z
       .number()
       .int()
       .nonnegative()
-      .describe('Allocated comment budget per post.'),
+      .describe('Word budget per post for comment output.'),
+    total_words_used: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe('Total words used across all posts.'),
     llm_requested: z
       .boolean()
       .describe('Whether LLM extraction was requested.'),
@@ -164,37 +162,83 @@ export const getRedditPostOutputSchema = z.object({
 
 type GetRedditPostOutput = z.infer<typeof getRedditPostOutputSchema>;
 
-function formatComments(comments: Comment[]): string {
+function countWords(text: string): number {
+  return text.split(/\s+/).filter(w => w.length > 0).length;
+}
+
+interface FormattedCommentsResult {
+  md: string;
+  wordsUsed: number;
+  shown: number;
+  truncated: number;
+}
+
+function formatComments(comments: Comment[], maxWords: number): FormattedCommentsResult {
   let md = '';
+  let wordsUsed = 0;
+  let shown = 0;
+
   for (const c of comments) {
     const indent = '  '.repeat(c.depth);
     const op = c.isOP ? ' **[OP]**' : '';
     const score = c.score >= 0 ? `+${c.score}` : `${c.score}`;
-    md += `${indent}- **u/${c.author}**${op} _(${score})_\n`;
+    const authorLine = `${indent}- **u/${c.author}**${op} _(${score})_\n`;
     const bodyLines = c.body.split('\n').map(line => `${indent}  ${line}`).join('\n');
-    md += `${bodyLines}\n\n`;
+    const commentMd = `${authorLine}${bodyLines}\n\n`;
+    const commentWords = countWords(commentMd);
+
+    if (wordsUsed + commentWords > maxWords && shown > 0) break;
+
+    md += commentMd;
+    wordsUsed += commentWords;
+    shown++;
   }
-  return md;
+
+  return { md, wordsUsed, shown, truncated: comments.length - shown };
 }
 
-function formatPost(result: PostResult, fetchComments: boolean): string {
-  const { post, comments, allocatedComments } = result;
+interface FormattedPostResult {
+  md: string;
+  wordsUsed: number;
+  commentsShown: number;
+  commentsTruncated: number;
+}
+
+function formatPost(result: PostResult, fetchComments: boolean, maxWords: number): FormattedPostResult {
+  const { post, comments } = result;
   let md = `## ${post.title}\n\n`;
   md += `**r/${post.subreddit}** • u/${post.author} • ⬆️ ${post.score} • 💬 ${post.commentCount} comments\n`;
   md += `🔗 ${post.url}\n\n`;
 
+  let wordsUsed = countWords(md);
+
   if (post.body) {
-    md += `### Post Content\n\n${post.body}\n\n`;
+    const bodySection = `### Post Content\n\n${post.body}\n\n`;
+    wordsUsed += countWords(bodySection);
+    md += bodySection;
   }
 
+  let commentsShown = 0;
+  let commentsTruncated = 0;
+
   if (fetchComments && comments.length > 0) {
-    md += `### Top Comments (${comments.length}/${post.commentCount} shown, allocated: ${allocatedComments})\n\n`;
-    md += formatComments(comments);
+    const remainingWords = Math.max(0, maxWords - wordsUsed);
+    const commentsResult = formatComments(comments, remainingWords);
+    commentsShown = commentsResult.shown;
+    commentsTruncated = commentsResult.truncated;
+
+    md += `### Top Comments (${commentsResult.shown}/${post.commentCount} shown, ${commentsResult.wordsUsed.toLocaleString()} words)\n\n`;
+    md += commentsResult.md;
+    wordsUsed += commentsResult.wordsUsed;
+
+    if (commentsResult.truncated > 0) {
+      md += `\n_${commentsResult.truncated} more comments not shown (word budget reached). Use use_llm=true for AI-synthesized summary._\n\n`;
+    }
   } else if (!fetchComments) {
     md += `_Comments not fetched (fetch_comments=false)_\n\n`;
   }
 
-  return md;
+  return { md, wordsUsed, commentsShown, commentsTruncated };
 }
 
 // ============================================================================
@@ -285,7 +329,6 @@ export async function handleSearchReddit(
 
 interface GetRedditPostsOptions {
   fetchComments?: boolean;
-  maxCommentsOverride?: number;
   use_llm?: boolean;
   what_to_extract?: string;
 }
@@ -308,6 +351,8 @@ interface PostProcessResult {
   llmErrors: number;
   llmAvailable: boolean;
   contents: string[];
+  totalWordsUsed: number;
+  skippedUrls: string[];
 }
 
 // --- Helpers ---
@@ -376,7 +421,9 @@ async function fetchAndProcessPosts(
 
   let failed = 0;
   const failedContents: string[] = [];
-  const successEntries: { url: string; result: PostResult; content: string }[] = [];
+  const successEntries: { url: string; result: PostResult; content: string; wordsUsed: number }[] = [];
+  const skippedUrls: string[] = [];
+  let totalWordsUsed = 0;
 
   for (const [url, result] of results) {
     if (result instanceof Error) {
@@ -384,7 +431,16 @@ async function fetchAndProcessPosts(
       failedContents.push(`## ❌ Failed: ${url}\n\n_${result.message}_`);
       continue;
     }
-    successEntries.push({ url, result, content: formatPost(result, fetchComments) });
+
+    // Check total word budget before formatting this post
+    if (totalWordsUsed >= REDDIT.MAX_WORDS_TOTAL) {
+      skippedUrls.push(url);
+      continue;
+    }
+
+    const formatted = formatPost(result, fetchComments, REDDIT.MAX_WORDS_PER_POST);
+    totalWordsUsed += formatted.wordsUsed;
+    successEntries.push({ url, result, content: formatted.md, wordsUsed: formatted.wordsUsed });
   }
 
   let llmErrors = 0;
@@ -406,7 +462,7 @@ async function fetchAndProcessPosts(
 
   const contents = [...failedContents, ...processedEntries.map(e => e.content)];
 
-  return { successful: successEntries.length, failed, llmErrors, llmAvailable: llmProcessor !== null, contents };
+  return { successful: successEntries.length, failed, llmErrors, llmAvailable: llmProcessor !== null, contents, totalWordsUsed, skippedUrls };
 }
 
 function buildRedditStatusExtras(
@@ -429,7 +485,6 @@ function formatRedditOutput(
   urls: string[],
   processResult: PostProcessResult,
   fetchComments: boolean,
-  commentsPerPost: number,
   totalBatches: number,
   use_llm: boolean,
   tokensPerUrl: number,
@@ -440,15 +495,27 @@ function formatRedditOutput(
     totalItems: urls.length,
     successful: processResult.successful,
     failed: processResult.failed,
-    ...(fetchComments ? { extras: { 'Comments/post': commentsPerPost } } : {}),
+    ...(fetchComments ? { extras: { 'Words used': processResult.totalWordsUsed.toLocaleString(), 'Word budget/post': REDDIT.MAX_WORDS_PER_POST.toLocaleString() } } : {}),
     ...(use_llm ? { tokensPerItem: tokensPerUrl } : {}),
     batches: totalBatches,
   });
 
+  let data = processResult.contents.join('\n\n---\n\n');
+
+  // Add truncation notice for skipped posts
+  if (processResult.skippedUrls.length > 0) {
+    data += '\n\n---\n\n';
+    data += `**Word limit reached (${REDDIT.MAX_WORDS_TOTAL.toLocaleString()} words).** The following posts were not included:\n`;
+    for (const url of processResult.skippedUrls) {
+      data += `- ${url}\n`;
+    }
+    data += `\nTo get these posts, call get-reddit-post again with just these URLs, or use use_llm=true for AI-synthesized summaries.`;
+  }
+
   return formatSuccess({
     title: `Reddit Posts Fetched (${processResult.successful}/${urls.length})`,
     summary: batchHeader + extraStatus,
-    data: processResult.contents.join('\n\n---\n\n'),
+    data,
   });
 }
 
@@ -472,24 +539,21 @@ export async function handleGetRedditPosts(
   urls: string[],
   clientId: string,
   clientSecret: string,
-  maxComments = 100,
   options: GetRedditPostsOptions = {},
   reporter: ToolReporter = NOOP_REPORTER,
 ): Promise<ToolExecutionResult<GetRedditPostOutput>> {
   try {
-    const { fetchComments = true, maxCommentsOverride, use_llm = false, what_to_extract } = options;
+    const { fetchComments = true, use_llm = false, what_to_extract } = options;
 
     const validationError = validatePostCount(urls.length);
     if (validationError) return toolFailure(validationError);
 
-    const allocation = calculateCommentAllocation(urls.length);
-    const commentsPerPost = fetchComments ? (maxCommentsOverride || allocation.perPostCapped) : 0;
     const totalBatches = Math.ceil(urls.length / REDDIT.BATCH_SIZE);
 
     await reporter.log('info', `Fetching ${urls.length} Reddit post(s) across ${totalBatches} batch(es)`);
     await reporter.progress(20, 100, 'Fetching Reddit post content');
     const client = new RedditClient(clientId, clientSecret);
-    const batchResult = await client.batchGetPosts(urls, commentsPerPost, fetchComments);
+    const batchResult = await client.batchGetPosts(urls, fetchComments);
     await reporter.log(
       'info',
       `Fetched Reddit batch results with ${batchResult.rateLimitHits} rate-limit retry/retries`,
@@ -501,7 +565,7 @@ export async function handleGetRedditPosts(
     );
     await reporter.log(
       'info',
-      `Processed ${processResult.successful} successful post(s) with ${processResult.failed} failure(s)`,
+      `Processed ${processResult.successful} successful post(s) with ${processResult.failed} failure(s), ${processResult.totalWordsUsed.toLocaleString()} words`,
     );
     await reporter.progress(85, 100, 'Formatting Reddit output');
 
@@ -513,7 +577,6 @@ export async function handleGetRedditPosts(
       urls,
       processResult,
       fetchComments,
-      commentsPerPost,
       totalBatches,
       use_llm,
       tokensPerUrl,
@@ -527,7 +590,8 @@ export async function handleGetRedditPosts(
         successful: processResult.successful,
         failed: processResult.failed,
         fetch_comments: fetchComments,
-        comments_per_post: commentsPerPost,
+        max_words_per_post: REDDIT.MAX_WORDS_PER_POST,
+        total_words_used: processResult.totalWordsUsed,
         llm_requested: use_llm,
         llm_available: processResult.llmAvailable,
         llm_failures: processResult.llmErrors,
@@ -577,7 +641,7 @@ export function registerGetRedditPostTool(server: MCPServer): void {
       name: 'get-reddit-post',
       title: 'Get Reddit Post',
       description:
-        'Fetch Reddit posts and comment trees from 2-50 Reddit URLs, optionally with AI extraction.',
+        'Fetch Reddit posts and comment trees from 2-50 Reddit URLs, optionally with AI extraction. Returns up to 20K words per post, 100K total.',
       schema: getRedditPostParamsSchema,
       outputSchema: getRedditPostOutputSchema,
       annotations: {
@@ -587,7 +651,7 @@ export function registerGetRedditPostTool(server: MCPServer): void {
         openWorldHint: true,
       },
     },
-    async ({ urls, fetch_comments, max_comments, use_llm, what_to_extract }, ctx) => {
+    async ({ urls, fetch_comments, use_llm, what_to_extract }, ctx) => {
       if (!getCapabilities().reddit) {
         return toToolResponse(toolFailure(getMissingEnvMessage('reddit')));
       }
@@ -598,10 +662,8 @@ export function registerGetRedditPostTool(server: MCPServer): void {
         urls,
         env.REDDIT_CLIENT_ID!,
         env.REDDIT_CLIENT_SECRET!,
-        max_comments,
         {
           fetchComments: fetch_comments,
-          maxCommentsOverride: max_comments !== 100 ? max_comments : undefined,
           use_llm,
           what_to_extract,
         },

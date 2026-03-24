@@ -50,7 +50,6 @@ export interface Comment {
 export interface PostResult {
   readonly post: Post;
   readonly comments: Comment[];
-  readonly allocatedComments: number;
   readonly actualComments: number;
 }
 
@@ -59,14 +58,6 @@ interface BatchPostResult {
   readonly batchesProcessed: number;
   readonly totalPosts: number;
   readonly rateLimitHits: number;
-  readonly commentAllocation: CommentAllocation;
-}
-
-interface CommentAllocation {
-  readonly totalBudget: number;
-  readonly perPostBase: number;
-  readonly perPostCapped: number;
-  redistributed: boolean;
 }
 
 /** Reddit API "Listing" wrapper */
@@ -111,12 +102,8 @@ interface RedditCommentData {
 
 type RedditPostResponse = [RedditListing<RedditPostData>, RedditListing<RedditCommentData>];
 
-export function calculateCommentAllocation(postCount: number): CommentAllocation {
-  const totalBudget = REDDIT.MAX_COMMENT_BUDGET;
-  const perPostBase = Math.floor(totalBudget / postCount);
-  const perPostCapped = Math.min(perPostBase, REDDIT.MAX_COMMENTS_PER_POST);
-  return { totalBudget, perPostBase, perPostCapped, redistributed: false };
-}
+/** Max comments to fetch per post from Reddit API */
+const FETCH_LIMIT = REDDIT.FETCH_LIMIT_PER_POST;
 
 // ============================================================================
 // Module-Level Token Cache (shared across all RedditClient instances)
@@ -138,11 +125,10 @@ let pendingAuthPromise: Promise<string | null> | null = null;
 async function fetchRedditJson(
   sub: string,
   id: string,
-  maxComments: number,
   token: string,
   userAgent: string,
 ): Promise<RedditPostResponse> {
-  const limit = Math.min(maxComments, 500);
+  const limit = Math.min(FETCH_LIMIT, 500);
   const apiUrl = `${REDDIT_API_BASE}/r/${sub}/comments/${id}?sort=top&limit=${limit}&depth=10&raw_json=1`;
 
   const res = await fetchWithTimeout(apiUrl, {
@@ -215,7 +201,6 @@ function formatBody(p: RedditPostData): string {
  */
 function parseCommentTree(
   commentListing: RedditListing<RedditCommentData>,
-  maxComments: number,
   opAuthor: string,
 ): Comment[] {
   const result: Comment[] = [];
@@ -224,7 +209,6 @@ function parseCommentTree(
     const sorted = [...items].sort((a, b) => (b.data?.score || 0) - (a.data?.score || 0));
 
     for (const c of sorted) {
-      if (result.length >= maxComments) return;
       if (c.kind !== 't1' || !c.data?.author || c.data.author === '[deleted]') continue;
 
       result.push({
@@ -235,7 +219,7 @@ function parseCommentTree(
         isOP: c.data.author === opAuthor,
       });
 
-      if (typeof c.data.replies === 'object' && c.data.replies?.data?.children && result.length < maxComments) {
+      if (typeof c.data.replies === 'object' && c.data.replies?.data?.children) {
         extract(c.data.replies.data.children, depth + 1);
       }
     }
@@ -253,14 +237,13 @@ function parseCommentTree(
 async function processBatch(
   client: RedditClient,
   batchUrls: string[],
-  maxComments: number,
 ): Promise<{ results: Map<string, PostResult | Error>; rateLimitHits: number }> {
   const results = new Map<string, PostResult | Error>();
   let rateLimitHits = 0;
 
   const batchResults = await pMapSettled(
     batchUrls,
-    url => client.getPost(url, maxComments),
+    url => client.getPost(url),
     5,
   );
 
@@ -279,63 +262,6 @@ async function processBatch(
   }
 
   return { results, rateLimitHits };
-}
-
-/**
- * Phase 2: Redistribute surplus comments to truncated posts
- */
-async function redistributeComments(
-  client: RedditClient,
-  allResults: Map<string, PostResult | Error>,
-  allocation: CommentAllocation,
-  initialPerPost: number,
-): Promise<number> {
-  let surplus = 0;
-  const truncatedUrls: string[] = [];
-  let rateLimitHits = 0;
-
-  for (const [url, result] of allResults) {
-    if (result instanceof Error) continue;
-    const used = result.comments.length;
-    if (used < initialPerPost) {
-      surplus += initialPerPost - used;
-    } else if (result.post.commentCount > used) {
-      truncatedUrls.push(url);
-    }
-  }
-
-  if (surplus > 0 && truncatedUrls.length > 0) {
-    const extraPerPost = Math.min(
-      Math.floor(surplus / truncatedUrls.length),
-      REDDIT.MAX_COMMENTS_PER_POST,
-    );
-    const newLimit = Math.min(initialPerPost + extraPerPost, REDDIT.MAX_COMMENTS_PER_POST);
-
-    allocation.redistributed = true;
-    mcpLog('info', `Phase 2: Redistributing ${surplus} surplus comments to ${truncatedUrls.length} truncated post(s) (${initialPerPost} → ${newLimit}/post)`, 'reddit');
-
-    const refetchResults = await pMapSettled(
-      truncatedUrls,
-      url => client.getPost(url, newLimit),
-      5,
-    );
-
-    for (let i = 0; i < refetchResults.length; i++) {
-      const result = refetchResults[i];
-      if (!result) continue;
-      const url = truncatedUrls[i] ?? '';
-      if (result.status === 'fulfilled') {
-        allResults.set(url, result.value);
-      } else {
-        const errorMsg = result.reason?.message || String(result.reason);
-        if (errorMsg.includes('429') || errorMsg.includes('rate')) rateLimitHits++;
-      }
-    }
-
-    mcpLog('info', `Phase 2 complete: re-fetched ${truncatedUrls.length} post(s)`, 'reddit');
-  }
-
-  return rateLimitHits;
 }
 
 // ── RedditClient Class ──
@@ -446,7 +372,7 @@ export class RedditClient {
    * Get a single Reddit post with comments
    * Returns PostResult or throws Error (for use with Promise.allSettled)
    */
-  async getPost(url: string, maxComments = 100): Promise<PostResult> {
+  async getPost(url: string): Promise<PostResult> {
     const parsed = this.parseUrl(url);
     if (!parsed) {
       throw new Error(`Invalid Reddit URL format: ${url}`);
@@ -461,13 +387,13 @@ export class RedditClient {
 
     for (let attempt = 0; attempt < REDDIT.RETRY_COUNT; attempt++) {
       try {
-        const data = await fetchRedditJson(parsed.sub, parsed.id, maxComments, token, this.userAgent);
+        const data = await fetchRedditJson(parsed.sub, parsed.id, token, this.userAgent);
         const [postListing, commentListing] = data;
 
         const post = parsePostData(postListing, parsed.sub);
-        const comments = parseCommentTree(commentListing, maxComments, post.author);
+        const comments = parseCommentTree(commentListing, post.author);
 
-        return { post, comments, allocatedComments: maxComments, actualComments: post.commentCount };
+        return { post, comments, actualComments: post.commentCount };
 
       } catch (error) {
         lastError = classifyError(error);
@@ -496,33 +422,28 @@ export class RedditClient {
     throw new Error(lastError?.message || 'Failed to fetch Reddit post after retries');
   }
 
-  async getPosts(urls: string[], maxComments = 100): Promise<Map<string, PostResult | Error>> {
+  async getPosts(urls: string[]): Promise<Map<string, PostResult | Error>> {
     if (urls.length <= REDDIT.BATCH_SIZE) {
       const results = await pMap(
         urls,
-        u => this.getPost(u, maxComments).catch(e => e as Error),
+        u => this.getPost(u).catch(e => e as Error),
         5,
       );
       return new Map(urls.map((u, i) => [u, results[i]!]));
     }
-    return (await this.batchGetPosts(urls, maxComments)).results;
+    return (await this.batchGetPosts(urls)).results;
   }
 
   async batchGetPosts(
     urls: string[],
-    maxCommentsOverride?: number,
     fetchComments = true,
     onBatchComplete?: (batchNum: number, totalBatches: number, processed: number) => void,
   ): Promise<BatchPostResult> {
     const allResults = new Map<string, PostResult | Error>();
     let rateLimitHits = 0;
 
-    const allocation = calculateCommentAllocation(urls.length);
-    const initialPerPost = fetchComments ? (maxCommentsOverride || allocation.perPostCapped) : 0;
-
-    // ── Phase 1: Fetch all posts with equal initial allocation ──
     const totalBatches = Math.ceil(urls.length / REDDIT.BATCH_SIZE);
-    mcpLog('info', `Phase 1: Fetching ${urls.length} posts in ${totalBatches} batch(es), ${initialPerPost} comments/post`, 'reddit');
+    mcpLog('info', `Fetching ${urls.length} posts in ${totalBatches} batch(es), up to ${FETCH_LIMIT} comments/post`, 'reddit');
 
     for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
       const startIdx = batchNum * REDDIT.BATCH_SIZE;
@@ -530,7 +451,7 @@ export class RedditClient {
 
       mcpLog('info', `Batch ${batchNum + 1}/${totalBatches} (${batchUrls.length} posts)`, 'reddit');
 
-      const batchResult = await processBatch(this, batchUrls, initialPerPost);
+      const batchResult = await processBatch(this, batchUrls);
       for (const [url, result] of batchResult.results) {
         allResults.set(url, result);
       }
@@ -549,11 +470,6 @@ export class RedditClient {
       }
     }
 
-    // ── Phase 2: Redistribute surplus to truncated posts ──
-    if (fetchComments && !maxCommentsOverride) {
-      rateLimitHits += await redistributeComments(this, allResults, allocation, initialPerPost);
-    }
-
-    return { results: allResults, batchesProcessed: totalBatches, totalPosts: urls.length, rateLimitHits, commentAllocation: allocation };
+    return { results: allResults, batchesProcessed: totalBatches, totalPosts: urls.length, rateLimitHits };
   }
 }

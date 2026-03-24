@@ -57,6 +57,9 @@ const RETRYABLE_STATUS_CODES = new Set([429, 502, 503, 504, 510]);
 // Status codes that are permanent failures (don't retry)
 const PERMANENT_FAILURE_CODES = new Set([400, 401, 403]);
 
+/** Minimum stripped-text length to consider a scrape successful (filters out empty SPA shells) */
+const MIN_USEFUL_CONTENT_LENGTH = 200 as const;
+
 /** Fallback attempt descriptor used by scrapeWithFallback */
 interface FallbackAttempt {
   readonly mode: 'basic' | 'javascript';
@@ -301,8 +304,13 @@ export class ScraperClient {
       country: attempt.country,
     });
 
-    // Success
+    // Success — but verify content isn't an empty SPA shell
     if (result.statusCode >= 200 && result.statusCode < 300 && !result.error) {
+      const strippedLength = result.content.replace(/<[^>]*>/g, '').trim().length;
+      if (strippedLength < MIN_USEFUL_CONTENT_LENGTH && attempt.mode === 'basic') {
+        mcpLog('info', `Basic mode returned only ${strippedLength} chars of text for ${url} — trying JS rendering`, 'scraper');
+        return { done: false, response: result };
+      }
       return { done: true, response: result };
     }
 
