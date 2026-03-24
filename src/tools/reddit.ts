@@ -445,19 +445,10 @@ function formatRedditOutput(
     batches: totalBatches,
   });
 
-  const nextSteps = [
-    processResult.successful > 0 ? 'VERIFY CLAIMS: web-search(keywords=["topic claim1 verify", "topic claim2 official docs", "topic best practices"]) — community says X, verify with web' : null,
-    processResult.successful > 0 ? 'SCRAPE REFERENCED LINKS: scrape-links(urls=[...URLs found in comments...], use_llm=true, what_to_extract="Extract evidence | data | recommendations") — follow external links from discussions' : null,
-    'BROADEN: search-reddit(queries=[...related angles...]) — if more perspectives needed',
-    processResult.successful > 0 ? 'SYNTHESIZE (only after verifying + scraping): deep-research(questions=[{question: "Based on verified Reddit findings about [topic]..."}])' : null,
-    processResult.failed > 0 ? 'Retry failed URLs individually' : null,
-  ].filter(Boolean) as string[];
-
   return formatSuccess({
     title: `Reddit Posts Fetched (${processResult.successful}/${urls.length})`,
     summary: batchHeader + extraStatus,
     data: processResult.contents.join('\n\n---\n\n'),
-    nextSteps,
   });
 }
 

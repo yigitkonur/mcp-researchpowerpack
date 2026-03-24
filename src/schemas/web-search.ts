@@ -16,9 +16,9 @@ const keywordsSchema = z
   .array(keywordSchema, {
     error: 'web-search: Keywords must be an array',
   })
-  .min(3, { message: 'web-search: MINIMUM 3 keywords required. Add more diverse keywords covering different perspectives.' })
+  .min(1, { message: 'web-search: At least 1 keyword required' })
   .max(100, { message: 'web-search: Maximum 100 keywords allowed per request' })
-  .describe('Array of search keywords (MINIMUM 3, RECOMMENDED 5-7, MAX 100). Each keyword runs as a separate Google search in parallel. Use diverse keywords covering different angles for comprehensive results.');
+  .describe('Array of search keywords (1-100, RECOMMENDED 3-7 for consensus ranking). Each keyword runs as a separate Google search in parallel. More keywords = better consensus detection across results.');
 
 const webSearchParamsShape = {
   keywords: keywordsSchema,
@@ -30,7 +30,7 @@ export type WebSearchParams = z.infer<typeof webSearchParamsSchema>;
 export const webSearchOutputSchema = z.object({
   content: z
     .string()
-    .describe('Formatted markdown report containing consensus URLs, per-query results, and next steps.'),
+    .describe('Formatted markdown report containing ranked URLs with consensus markers and per-query results.'),
   metadata: z.object({
     total_keywords: z
       .number()

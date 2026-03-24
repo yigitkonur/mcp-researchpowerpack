@@ -221,16 +221,6 @@ function assembleContentEntries(successItems: ProcessedResult[], failedContents:
   return contents;
 }
 
-function buildScrapeNextSteps(metrics: ScrapeMetrics): string[] {
-  return [
-    metrics.successful > 0 ? 'FOLLOW LINKS: If scraped content references other URLs/docs/sources, scrape those too: scrape-links(urls=[...extracted URLs...], use_llm=true)' : null,
-    metrics.successful > 0 ? 'VERIFY: web-search(keywords=["claim from scraped content", "topic official source", "topic benchmark data"]) — cross-check extracted claims' : null,
-    metrics.successful > 0 ? 'COMMUNITY: search-reddit(queries=["topic experiences", "topic recommendations", "topic issues"]) — if topic warrants community perspective' : null,
-    metrics.successful > 0 ? 'SYNTHESIZE (only after verifying + community check): deep-research(questions=[{question: "Based on scraped data and verification..."}])' : null,
-    metrics.failed > 0 ? `Retry failed URLs with longer timeout: scrape-links(urls=[...], timeout=60)` : null,
-  ].filter(Boolean) as string[];
-}
-
 function buildScrapeMetadata(
   params: ScrapeLinksParams,
   metrics: ScrapeMetrics,
@@ -276,11 +266,6 @@ function buildScrapeResponse(
     title: 'Scraping Complete',
     summary: batchHeader,
     data: contents.join('\n\n---\n\n'),
-    nextSteps: buildScrapeNextSteps(metrics),
-    metadata: {
-      'Execution time': formatDuration(executionTime),
-      'Token budget': TOKEN_BUDGETS.SCRAPER.toLocaleString(),
-    },
   });
 
   const metadata = buildScrapeMetadata(params, metrics, tokensPerUrl, totalBatches, executionTime);

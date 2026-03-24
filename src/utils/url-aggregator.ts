@@ -31,24 +31,6 @@ const DEFAULT_REDDIT_MIN_CONSENSUS_URLS = 3 as const;
 /** High consensus frequency threshold for enhanced output labeling */
 const HIGH_CONSENSUS_THRESHOLD = 4 as const;
 
-/** Maximum top resources to show in enhanced output */
-const MAX_TOP_RESOURCES = 20 as const;
-
-/** Maximum URLs to show in frequency metadata list */
-const MAX_FREQ_METADATA_URLS = 30 as const;
-
-/** Maximum top URLs for scrape-links suggestion */
-const MAX_SCRAPE_SUGGESTION_URLS = 5 as const;
-
-/** Maximum top URLs for Reddit get-reddit-post suggestion */
-const MAX_REDDIT_SUGGESTION_URLS = 10 as const;
-
-/** Maximum short URL display length */
-const MAX_SHORT_URL_LENGTH = 40 as const;
-
-/** Maximum snippet length before truncation */
-const MAX_SNIPPET_LENGTH = 200 as const;
-
 /**
  * Aggregated URL data structure
  */
@@ -160,29 +142,24 @@ function normalizeUrl(url: string): string {
 }
 
 /**
- * Filter URLs by minimum frequency
- * Returns URLs appearing in at least minFrequency searches
+ * Count URLs meeting a frequency threshold
  */
-function filterByFrequency(
+function countByFrequency(
   urlMap: Map<string, AggregatedUrl>,
   minFrequency: number
-): AggregatedUrl[] {
-  const filtered: AggregatedUrl[] = [];
-  
+): number {
+  let count = 0;
   for (const url of urlMap.values()) {
-    if (url.frequency >= minFrequency) {
-      filtered.push(url);
-    }
+    if (url.frequency >= minFrequency) count++;
   }
-
-  return filtered;
+  return count;
 }
 
 /**
  * Calculate weighted scores and normalize to 100.0
- * Returns sorted array with rank assignments
+ * Returns ALL URLs sorted by score with rank assignments and consensus marking
  */
-function calculateWeightedScores(urls: AggregatedUrl[]): RankedUrl[] {
+function calculateWeightedScores(urls: AggregatedUrl[], consensusThreshold: number): RankedUrl[] {
   if (urls.length === 0) return [];
 
   // Sort by total score descending
@@ -202,7 +179,7 @@ function calculateWeightedScores(urls: AggregatedUrl[]): RankedUrl[] {
     positions: url.positions,
     queries: url.queries,
     bestPosition: url.bestPosition,
-    isConsensus: url.frequency >= WEB_CONSENSUS_THRESHOLD,
+    isConsensus: url.frequency >= consensusThreshold,
   }));
 }
 
@@ -250,22 +227,23 @@ export function generateEnhancedOutput(
   const lines: string[] = [];
   
   // Header
-  lines.push(`## The Perfect Search Results (Aggregated from ${allKeywords.length} Queries)`);
+  const consensusCount = rankedUrls.filter(u => u.isConsensus).length;
+  lines.push(`## Aggregated Search Results (${allKeywords.length} Queries → ${rankedUrls.length} Unique URLs)`);
   lines.push('');
-  lines.push(`Based on ${allKeywords.length} distinct searches, we identified **${rankedUrls.length} high-consensus resources**. Here's what the data reveals:`);
+  lines.push(`Based on ${allKeywords.length} distinct searches, we found **${rankedUrls.length} unique resources** (${consensusCount} appear in multiple queries).`);
   lines.push('');
-  
+
   if (thresholdNote) {
     lines.push(`> ${thresholdNote}`);
     lines.push('');
   }
-  
-  // Top Consensus Resources
-  lines.push('### 🥇 Top Consensus Resources');
+
+  // All ranked resources
+  lines.push('### 🥇 Ranked Resources');
   lines.push('');
-  
-  for (const url of rankedUrls.slice(0, MAX_TOP_RESOURCES)) {
-    const highConsensus = url.frequency >= HIGH_CONSENSUS_THRESHOLD ? ' ⭐ HIGHEST CONSENSUS' : '';
+
+  for (const url of rankedUrls) {
+    const highConsensus = url.frequency >= HIGH_CONSENSUS_THRESHOLD ? ' ⭐ HIGHEST CONSENSUS' : url.isConsensus ? ' ✓ CONSENSUS' : '';
     lines.push(`#### #${url.rank}: ${url.title} (Score: ${url.score.toFixed(1)})${highConsensus}`);
     
     // Appeared in queries
@@ -275,11 +253,8 @@ export function generateEnhancedOutput(
     // Best ranking
     lines.push(`- **Best ranking:** Position ${url.bestPosition}`);
     
-    // Description (truncated snippet)
-    const description = url.snippet.length > MAX_SNIPPET_LENGTH
-      ? url.snippet.substring(0, MAX_SNIPPET_LENGTH - 3) + '...' 
-      : url.snippet;
-    lines.push(`- **Description:** ${description}`);
+    // Description
+    lines.push(`- **Description:** ${url.snippet}`);
     
     // Justification
     lines.push(`- **Why it's #${url.rank}:** ${generateJustification(url, url.rank)}`);
@@ -299,54 +274,20 @@ export function generateEnhancedOutput(
   // Sort all URLs by frequency for the unique URLs list
   const sortedByFreq = [...rankedUrls].sort((a, b) => b.frequency - a.frequency);
   const urlFreqList = sortedByFreq
-    .slice(0, MAX_FREQ_METADATA_URLS)
-    .map(u => {
-      const shortUrl = u.url.length > MAX_SHORT_URL_LENGTH ? u.url.substring(0, MAX_SHORT_URL_LENGTH - 3) + '...' : u.url;
-      return `${shortUrl} (${u.frequency}x)`;
-    })
+    .map(u => `${u.url} (${u.frequency}x)`)
     .join(', ');
   
   lines.push(`- **Unique URLs Found:** ${totalUniqueUrls} — top by frequency: ${urlFreqList}`);
   lines.push(`- **Consensus Threshold:** ≥${frequencyThreshold} appearances`);
   lines.push('');
 
-  // Next Steps - actionable follow-up commands
-  lines.push('---');
-  lines.push('');
-  lines.push('### ➡️ Next Steps');
-  lines.push('');
-
-  // Generate URL list for scrape-links command
-  const topUrls = rankedUrls.slice(0, Math.min(MAX_SCRAPE_SUGGESTION_URLS, rankedUrls.length));
-  if (topUrls.length > 0) {
-    const urlList = topUrls.map(u => `"${u.url}"`).join(', ');
-    lines.push(`**Scrape top consensus URLs for full content:**`);
-    lines.push('```');
-    lines.push(`scrape-links(urls=[${urlList}], use_llm=true, what_to_extract="Extract key insights, recommendations, and actionable information")`);
-    lines.push('```');
-    lines.push('');
-  }
-
-  // Reddit follow-up
-  lines.push(`**Get community perspective from Reddit:**`);
-  lines.push('```');
-  lines.push(`search-reddit(queries=["${allKeywords[0] || 'topic'} reddit", "${allKeywords[0] || 'topic'} recommendations", "${allKeywords[0] || 'topic'} best practices"])`);
-  lines.push('```');
-  lines.push('');
-
-  // Deep research follow-up
-  lines.push(`**Synthesize findings with deep research:**`);
-  lines.push('```');
-  lines.push(`deep-research(questions=[{question: "Based on web search results, what are the key findings, best practices, and recommendations for [topic]?"}])`);
-  lines.push('```');
-  lines.push('');
-  
   return lines.join('\n');
 }
 
 /**
- * Full aggregation pipeline with fallback thresholds
- * Tries ≥3, falls back to ≥2, then ≥1 if needed
+ * Full aggregation pipeline — returns ALL URLs ranked by CTR score.
+ * Determines a consensus threshold (≥3, ≥2, or ≥1) for labeling, but never
+ * drops URLs below the threshold. Every collected URL appears in the output.
  */
 export function aggregateAndRank(
   searches: KeywordSearchResult[],
@@ -356,24 +297,25 @@ export function aggregateAndRank(
   const totalUniqueUrls = urlMap.size;
   const totalQueries = searches.length;
 
-  // Try thresholds in order: 3, 2, 1
+  // Determine consensus threshold for labeling (not filtering)
   const thresholds = [3, 2, 1];
-  let rankedUrls: RankedUrl[] = [];
-  let usedThreshold = 3;
+  let usedThreshold = 1;
   let thresholdNote: string | undefined;
 
   for (const threshold of thresholds) {
-    const filtered = filterByFrequency(urlMap, threshold);
-    rankedUrls = calculateWeightedScores(filtered);
-
-    if (rankedUrls.length >= minConsensusUrls || threshold === 1) {
+    const count = countByFrequency(urlMap, threshold);
+    if (count >= minConsensusUrls || threshold === 1) {
       usedThreshold = threshold;
       if (threshold < 3) {
-        thresholdNote = `Note: Frequency filter lowered to ≥${threshold} due to result diversity.`;
+        thresholdNote = `Note: Consensus threshold set to ≥${threshold} due to result diversity.`;
       }
       break;
     }
   }
+
+  // Rank ALL URLs, marking consensus based on determined threshold
+  const allUrls = [...urlMap.values()];
+  const rankedUrls = calculateWeightedScores(allUrls, usedThreshold);
 
   return {
     rankedUrls,
@@ -504,27 +446,24 @@ function aggregateRedditResults(
 }
 
 /**
- * Filter Reddit URLs by minimum frequency
+ * Count Reddit URLs meeting a frequency threshold
  */
-function filterRedditByFrequency(
+function countRedditByFrequency(
   urlMap: Map<string, AggregatedRedditUrl>,
   minFrequency: number
-): AggregatedRedditUrl[] {
-  const filtered: AggregatedRedditUrl[] = [];
-  
+): number {
+  let count = 0;
   for (const url of urlMap.values()) {
-    if (url.frequency >= minFrequency) {
-      filtered.push(url);
-    }
+    if (url.frequency >= minFrequency) count++;
   }
-
-  return filtered;
+  return count;
 }
 
 /**
  * Calculate weighted scores for Reddit URLs
+ * Returns ALL URLs sorted by score with consensus marking
  */
-function calculateRedditWeightedScores(urls: AggregatedRedditUrl[]): RankedRedditUrl[] {
+function calculateRedditWeightedScores(urls: AggregatedRedditUrl[], consensusThreshold: number): RankedRedditUrl[] {
   if (urls.length === 0) return [];
 
   // Sort by total score descending
@@ -545,12 +484,13 @@ function calculateRedditWeightedScores(urls: AggregatedRedditUrl[]): RankedReddi
     positions: url.positions,
     queries: url.queries,
     bestPosition: url.bestPosition,
-    isConsensus: url.frequency >= REDDIT_CONSENSUS_THRESHOLD, // Lower threshold for Reddit (often fewer results)
+    isConsensus: url.frequency >= consensusThreshold,
   }));
 }
 
 /**
- * Full Reddit aggregation pipeline with fallback thresholds
+ * Full Reddit aggregation pipeline — returns ALL URLs ranked by CTR score.
+ * Determines a consensus threshold for labeling, never drops URLs.
  */
 export function aggregateAndRankReddit(
   searches: Map<string, RedditSearchResult[]>,
@@ -560,24 +500,25 @@ export function aggregateAndRankReddit(
   const totalUniqueUrls = urlMap.size;
   const totalQueries = searches.size;
 
-  // Try thresholds in order: 2, 1 (Reddit often has less overlap than web search)
+  // Determine consensus threshold for labeling (not filtering)
   const thresholds = [2, 1];
-  let rankedUrls: RankedRedditUrl[] = [];
-  let usedThreshold = 2;
+  let usedThreshold = 1;
   let thresholdNote: string | undefined;
 
   for (const threshold of thresholds) {
-    const filtered = filterRedditByFrequency(urlMap, threshold);
-    rankedUrls = calculateRedditWeightedScores(filtered);
-
-    if (rankedUrls.length >= minConsensusUrls || threshold === 1) {
+    const count = countRedditByFrequency(urlMap, threshold);
+    if (count >= minConsensusUrls || threshold === 1) {
       usedThreshold = threshold;
       if (threshold < 2 && totalQueries > 1) {
-        thresholdNote = `Note: Frequency filter set to ≥${threshold} due to result diversity across queries.`;
+        thresholdNote = `Note: Consensus threshold set to ≥${threshold} due to result diversity across queries.`;
       }
       break;
     }
   }
+
+  // Rank ALL URLs, marking consensus based on determined threshold
+  const allUrls = [...urlMap.values()];
+  const rankedUrls = calculateRedditWeightedScores(allUrls, usedThreshold);
 
   return {
     rankedUrls,
@@ -690,45 +631,6 @@ export function generateRedditEnhancedOutput(
   lines.push(`- **Queries:** ${allQueries.map(q => `"${q}"`).join(', ')}`);
   lines.push(`- **Unique Posts Found:** ${totalUniqueUrls}`);
   lines.push(`- **High-Consensus Posts:** ${consensusUrls.length}`);
-  lines.push('');
-
-  // Next Steps - actionable follow-up commands that form a research loop
-  lines.push('---');
-  lines.push('');
-  lines.push('### ➡️ Next Steps (DO ALL OF THESE — research is iterative)');
-  lines.push('');
-
-  // IMMEDIATE: Fetch raw comments
-  const topUrls = rankedUrls.slice(0, Math.min(MAX_REDDIT_SUGGESTION_URLS, rankedUrls.length));
-  if (topUrls.length >= 2) {
-    const urlList = topUrls.map(u => `"${u.url}"`).join(', ');
-    lines.push(`**1. IMMEDIATE — Fetch raw comments (best insights are in comments):**`);
-    lines.push('```');
-    lines.push(`get-reddit-post(urls=[${urlList}], fetch_comments=true)`);
-    lines.push('```');
-    lines.push('');
-  }
-
-  // VERIFY: Cross-check community claims with web search
-  const topicKeyword = allQueries[0] || 'topic';
-  lines.push(`**2. VERIFY — Cross-check Reddit claims with web search:**`);
-  lines.push('```');
-  lines.push(`web-search(keywords=["${topicKeyword} official docs", "${topicKeyword} best practices 2025", "${topicKeyword} comparison benchmark"])`);
-  lines.push('```');
-  lines.push('');
-
-  // DEEP DIVE: Scrape external links referenced in posts
-  lines.push(`**3. DEEP DIVE — If posts reference external links/docs, scrape them:**`);
-  lines.push('```');
-  lines.push(`scrape-links(urls=[...URLs mentioned in Reddit posts...], use_llm=true, what_to_extract="Extract key findings | recommendations | data points | comparisons")`);
-  lines.push('```');
-  lines.push('');
-
-  // SYNTHESIZE: Only after gathering raw data
-  lines.push(`**4. SYNTHESIZE — Only after steps 1-3:**`);
-  lines.push('```');
-  lines.push(`deep-research(questions=[{question: "Based on Reddit discussions and web verification about [topic], what are the validated recommendations?"}])`);
-  lines.push('```');
   lines.push('');
 
   return lines.join('\n');

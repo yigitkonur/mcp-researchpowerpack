@@ -1,17 +1,6 @@
 /**
- * MCP Response Formatters - 70/20/10 Pattern
- * 
- * All tool responses should follow this structure:
- * - 70% Summary: Key insights, status, metrics
- * - 20% Data: Structured results (lists, tables)
- * - 10% Next Steps: Actionable follow-up commands
+ * MCP Response Formatters
  */
-
-/** Default maximum items to display in list formatting */
-export const DEFAULT_MAX_ITEMS = 20 as const;
-
-/** Maximum snippet length before truncation in URL aggregator output */
-export const MAX_SNIPPET_LENGTH = 200 as const;
 
 /** Duration thresholds in milliseconds */
 const SECONDS_MS = 1_000 as const;
@@ -113,10 +102,9 @@ export function formatError(opts: ErrorOptions): string {
   const prefix = opts.toolName ? `[${opts.toolName}] ` : '';
   parts.push(`❌ ${prefix}${opts.code}: ${message}`);
 
-  // Retryable hint — be specific about what to do while waiting
+  // Retryable hint
   if (opts.retryable) {
-    parts.push('');
-    parts.push('*This error is retryable. Wait a moment and try again — but use the alternatives below in the meantime so research continues.*');
+    parts.push('*Retryable.*');
   }
 
   // How to fix
@@ -126,17 +114,11 @@ export function formatError(opts: ErrorOptions): string {
     opts.howToFix.forEach((step, i) => parts.push(`${i + 1}. ${step}`));
   }
 
-  // Alternatives — directive, not optional
+  // Alternatives
   if (opts.alternatives?.length) {
     parts.push('');
-    parts.push('**DO THIS INSTEAD (don\'t stop researching):**');
+    parts.push('**Alternatives:**');
     opts.alternatives.forEach((alt, i) => parts.push(`${i + 1}. ${alt}`));
-  }
-
-  // Continuation footer — push agents to keep going
-  if (opts.alternatives?.length) {
-    parts.push('');
-    parts.push('> This tool failed but your research should NOT stop. Use the alternatives above to continue gathering information from other sources.');
   }
 
   return parts.join('\n');
@@ -217,12 +199,9 @@ export interface ListItem {
  * Format a numbered list with optional metadata
  */
 export function formatList(items: ListItem[], options?: { maxItems?: number; numbered?: boolean }): string {
-  const max = options?.maxItems ?? DEFAULT_MAX_ITEMS;
   const numbered = options?.numbered ?? true;
-  const toShow = items.slice(0, max);
-  const remaining = items.length - max;
 
-  const lines = toShow.map((item, i) => {
+  const lines = items.map((item, i) => {
     const prefix = numbered ? `${i + 1}. ` : '• ';
     let line = `${prefix}**${item.title}**`;
     if (item.meta) {
@@ -236,10 +215,6 @@ export function formatList(items: ListItem[], options?: { maxItems?: number; num
     }
     return line;
   });
-
-  if (remaining > 0) {
-    lines.push(`\n*...and ${remaining} more*`);
-  }
 
   return lines.join('\n');
 }
