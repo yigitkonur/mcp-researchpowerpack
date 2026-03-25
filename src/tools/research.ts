@@ -201,6 +201,15 @@ function formatResearchOutput(
     title: `Research Complete (${successful.length}/${totalQuestions})`,
     summary: batchHeader,
     data: buildQuestionsData(results),
+    nextSteps: [
+      successful.length > 0 ? 'scrape-links on cited URLs to verify primary sources' : null,
+      successful.length > 0 ? 'search-reddit for community validation of findings' : null,
+      failed.length > 0 ? 'Retry failed questions with more specific context' : null,
+    ].filter(Boolean) as string[],
+    metadata: {
+      'Execution time': formatDuration(executionTime),
+      'Token budget': TOKEN_BUDGETS.RESEARCH.toLocaleString(),
+    },
   });
 
   return toolSuccess(formattedContent, {

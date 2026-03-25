@@ -79,7 +79,6 @@ function processAndRankResults(response: SearchResponse): {
 }
 
 function buildConsensusSection(
-  _consensusUrls: SearchAggregation['rankedUrls'],
   keywords: string[],
   aggregation: SearchAggregation,
 ): string {
@@ -217,7 +216,7 @@ export async function handleWebSearch(
       `Collected ${aggregation.totalUniqueUrls} unique URLs across ${response.totalKeywords} queries`,
     );
 
-    const consensusSection = buildConsensusSection(consensusUrls, params.keywords, aggregation);
+    const consensusSection = buildConsensusSection(params.keywords, aggregation);
     const { markdown: perQuerySection, totalResults } = buildPerQuerySection(response, urlLookup);
     await reporter.progress(80, 100, 'Ranking and formatting search results');
 

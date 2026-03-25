@@ -266,6 +266,15 @@ function buildScrapeResponse(
     title: 'Scraping Complete',
     summary: batchHeader,
     data: contents.join('\n\n---\n\n'),
+    nextSteps: [
+      metrics.successful > 0 ? 'web-search or search-reddit to cross-check claims from scraped content' : null,
+      metrics.successful > 0 ? 'deep-research to synthesize findings across scraped sources' : null,
+      metrics.failed > 0 ? 'Retry failed URLs with timeout=60' : null,
+    ].filter(Boolean) as string[],
+    metadata: {
+      'Execution time': formatDuration(executionTime),
+      'Token budget': TOKEN_BUDGETS.SCRAPER.toLocaleString(),
+    },
   });
 
   const metadata = buildScrapeMetadata(params, metrics, tokensPerUrl, totalBatches, executionTime);
