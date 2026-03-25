@@ -196,6 +196,9 @@ function formatBody(p: RedditPostData): string {
   return '';
 }
 
+/** Safety cap on comment tree recursion depth */
+const MAX_COMMENT_DEPTH = 15 as const;
+
 /**
  * Extract and sort comments from a Reddit comment listing
  */
@@ -206,6 +209,7 @@ function parseCommentTree(
   const result: Comment[] = [];
 
   const extract = (items: ReadonlyArray<{ readonly kind: string; readonly data: RedditCommentData }>, depth = 0): void => {
+    if (depth > MAX_COMMENT_DEPTH) return;
     const sorted = [...items].sort((a, b) => (b.data?.score || 0) - (a.data?.score || 0));
 
     for (const c of sorted) {

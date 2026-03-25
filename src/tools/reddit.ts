@@ -163,7 +163,8 @@ export const getRedditPostOutputSchema = z.object({
 type GetRedditPostOutput = z.infer<typeof getRedditPostOutputSchema>;
 
 function countWords(text: string): number {
-  return text.split(/\s+/).filter(w => w.length > 0).length;
+  const plain = text.replace(/[*_~`#>|[\]()!-]/g, '');
+  return plain.split(/\s+/).filter(w => w.length > 0).length;
 }
 
 interface FormattedCommentsResult {
@@ -307,7 +308,8 @@ export async function handleSearchReddit(
 
     await reporter.progress(60, 100, 'Collected Reddit search results');
     const aggregation = aggregateAndRankReddit(results, 3);
-    const content = generateRedditEnhancedOutput(aggregation, limited, results);
+    const rawContent = generateRedditEnhancedOutput(aggregation, limited, results);
+    const content = rawContent + '\n---\n**Next Steps:**\n→ get-reddit-post with top URLs to read full threads and comments\n→ web-search to cross-reference Reddit findings with official sources\n';
     await reporter.log('info', `Collected ${totalResults} Reddit results across ${limited.length} queries`);
     await reporter.progress(85, 100, 'Ranking Reddit results');
     return toolSuccess(content, {
@@ -516,6 +518,11 @@ function formatRedditOutput(
     title: `Reddit Posts Fetched (${processResult.successful}/${urls.length})`,
     summary: batchHeader + extraStatus,
     data,
+    nextSteps: [
+      processResult.successful > 0 ? 'web-search to verify claims from Reddit discussions' : null,
+      processResult.successful > 0 ? 'scrape-links on URLs referenced in comments' : null,
+      processResult.failed > 0 ? 'Retry failed URLs individually' : null,
+    ].filter(Boolean) as string[],
   });
 }
 

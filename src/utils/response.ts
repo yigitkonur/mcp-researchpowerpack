@@ -198,7 +198,7 @@ export interface ListItem {
 /**
  * Format a numbered list with optional metadata
  */
-export function formatList(items: ListItem[], options?: { maxItems?: number; numbered?: boolean }): string {
+export function formatList(items: ListItem[], options?: { numbered?: boolean }): string {
   const numbered = options?.numbered ?? true;
 
   const lines = items.map((item, i) => {
