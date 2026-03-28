@@ -76,3 +76,16 @@ src/
 - Zod v4 for runtime schema validation (schemas in `src/schemas/`)
 - Tool identifiers use kebab-case (`web-search`, not `webSearch`)
 - Node.js >=20.19.0 or >=22.12.0
+
+
+## Build (remote — Mac mini)
+
+All builds run on the Mac mini. Never build locally.
+
+```
+make up        # sync + build on mini (~7s incremental)
+make test      # run tests on mini
+make dev       # start MCP dev server on mini
+make deploy    # deploy from mini
+make info      # show detected config
+```
