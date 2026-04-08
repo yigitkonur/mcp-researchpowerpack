@@ -182,18 +182,27 @@ export function getMissingEnvMessage(capability: keyof Capabilities): string {
 // ============================================================================
 
 // ============================================================================
-// Concurrency Limits (all I/O-bound — tuned for limited-core deployments)
+// Concurrency Limits — tuned for 2-core deployments
+//
+// Bottleneck analysis (Node.js single-threaded event loop):
+//   SEARCH:  Pure I/O + tiny JSON parse (~5KB). High concurrency safe.
+//   SCRAPER: I/O + Turndown HTML→MD conversion (20-50ms/page, synchronous).
+//            Too many concurrent = burst of responses blocks event loop.
+//            20 concurrent × 30ms avg = 600ms worst-case event loop stall.
+//   REDDIT:  I/O + moderate JSON. Reddit rate-limits at ~60 req/min.
+//   LLM:    I/O-only locally, but remote inference uses multiple cores per
+//            request. Default 10 keeps remote server responsive.
 // ============================================================================
 
 export const CONCURRENCY = {
-  /** Serper web/reddit search — lightweight JSON responses */
-  SEARCH: 80,
-  /** Scrape.do URL fetching — heavier payloads, credit-metered */
-  SCRAPER: 100,
-  /** Reddit API post/comment fetching — rate-limited by Reddit */
-  REDDIT: 50,
-  /** LLM extraction calls — configurable via LLM_CONCURRENCY env var */
-  LLM_EXTRACTION: safeParseInt(process.env.LLM_CONCURRENCY, 100, 1, 2000),
+  /** Serper API — tiny JSON responses, pure I/O, no CPU cost */
+  SEARCH: 30,
+  /** Scrape.do — HTML responses (50-500KB), Turndown conversion is CPU work */
+  SCRAPER: 20,
+  /** Reddit API — moderate payloads, aggressive rate limiting (60 req/min) */
+  REDDIT: 10,
+  /** LLM extraction — remote inference bottleneck. Tune via LLM_CONCURRENCY env */
+  LLM_EXTRACTION: safeParseInt(process.env.LLM_CONCURRENCY, 10, 1, 50),
 } as const;
 
 export const SCRAPER = {

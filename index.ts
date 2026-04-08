@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 
+// Expand libuv thread pool for parallel DNS lookups (default 4 is too low for 20+ concurrent connections)
+if (!process.env.UV_THREADPOOL_SIZE) {
+  process.env.UV_THREADPOOL_SIZE = '8';
+}
+
 import { Logger } from 'mcp-use';
 import {
   InMemorySessionStore,
