@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { SearchClient } from '../clients/search.js';
 import { RedditClient, type PostResult, type Comment } from '../clients/reddit.js';
 import { aggregateAndRankReddit, generateRedditEnhancedOutput } from '../utils/url-aggregator.js';
-import { REDDIT, getCapabilities, getMissingEnvMessage, parseEnv } from '../config/index.js';
+import { REDDIT, CONCURRENCY, getCapabilities, getMissingEnvMessage, parseEnv } from '../config/index.js';
 import { classifyError } from '../utils/errors.js';
 import { createLLMProcessor, processContentWithLLM } from '../services/llm-processor.js';
 import { pMap } from '../utils/concurrency.js';
@@ -454,7 +454,7 @@ async function fetchAndProcessPosts(
       );
       if (llmOut.llmFailed) llmErrors++;
       return { ...entry, content: llmOut.content };
-    }, 3);
+    }, CONCURRENCY.LLM_EXTRACTION);
     processedEntries = llmResults;
   } else {
     processedEntries = successEntries;

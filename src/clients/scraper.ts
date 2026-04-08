@@ -4,7 +4,7 @@
  * Implements robust error handling that NEVER crashes
  */
 
-import { parseEnv, SCRAPER } from '../config/index.js';
+import { parseEnv, SCRAPER, CONCURRENCY } from '../config/index.js';
 import {
   classifyError,
   fetchWithTimeout,
@@ -22,7 +22,6 @@ const SCRAPE_MODES = ['basic', 'javascript', 'javascript_geo'] as const;
 type ScrapeMode = typeof SCRAPE_MODES[number];
 
 const CREDIT_COSTS: Record<string, number> = { basic: 1, javascript: 5, javascript_geo: 5 } as const;
-const DEFAULT_SCRAPE_CONCURRENCY = 10 as const;
 const SCRAPE_BATCH_SIZE = 30 as const;
 const MAX_RETRIES = 1 as const;
 /** Overall timeout for all fallback attempts on a single URL */
@@ -384,7 +383,7 @@ export class ScraperClient {
       const batchResults = await pMapSettled(
         batchUrls,
         url => this.scrapeWithFallback(url, options),
-        DEFAULT_SCRAPE_CONCURRENCY
+        CONCURRENCY.SCRAPER
       );
 
       for (let i = 0; i < batchResults.length; i++) {
@@ -440,7 +439,7 @@ export class ScraperClient {
    * NEVER throws
    */
   private async processBatch(urls: string[], options: { timeout?: number }): Promise<Array<ScrapeResponse & { url: string }>> {
-    const results = await pMapSettled(urls, url => this.scrapeWithFallback(url, options), DEFAULT_SCRAPE_CONCURRENCY);
+    const results = await pMapSettled(urls, url => this.scrapeWithFallback(url, options), CONCURRENCY.SCRAPER);
 
     return results.map((result, index) => {
       const url = urls[index] || '';

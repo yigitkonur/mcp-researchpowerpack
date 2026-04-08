@@ -5,7 +5,7 @@
 
 import type { MCPServer } from 'mcp-use/server';
 
-import { SCRAPER, getCapabilities, getMissingEnvMessage } from '../config/index.js';
+import { SCRAPER, CONCURRENCY, getCapabilities, getMissingEnvMessage } from '../config/index.js';
 import {
   scrapeLinksOutputSchema,
   scrapeLinksParamsSchema,
@@ -183,7 +183,7 @@ async function processItemsWithLlm(
     return { items: successItems, llmErrors };
   }
 
-  mcpLog('info', `Starting parallel LLM extraction for ${successItems.length} pages (concurrency: 3)`, 'scrape');
+  mcpLog('info', `Starting parallel LLM extraction for ${successItems.length} pages (concurrency: ${CONCURRENCY.LLM_EXTRACTION})`, 'scrape');
 
   const llmResults = await pMap(successItems, async (item) => {
     mcpLog('debug', `LLM extracting ${item.url} (${tokensPerUrl} tokens)...`, 'scrape');
@@ -202,7 +202,7 @@ async function processItemsWithLlm(
     llmErrors++;
     mcpLog('warning', `LLM extraction skipped for ${item.url}: ${llmResult.error || 'unknown reason'}`, 'scrape');
     return item;
-  }, 3);
+  }, CONCURRENCY.LLM_EXTRACTION);
 
   return { items: llmResults, llmErrors };
 }

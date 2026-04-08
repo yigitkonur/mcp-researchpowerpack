@@ -15,9 +15,6 @@ import {
 } from '../utils/errors.js';
 import { mcpLog } from '../utils/logger.js';
 
-/** Default concurrency for parallel LLM extractions */
-export const DEFAULT_LLM_CONCURRENCY = 99 as const;
-
 /** Maximum input characters for LLM processing (~25k tokens) */
 const MAX_LLM_INPUT_CHARS = 100_000 as const;
 

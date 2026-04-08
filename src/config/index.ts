@@ -181,8 +181,22 @@ export function getMissingEnvMessage(capability: keyof Capabilities): string {
 // Scraper Configuration (Scrape.do implementation)
 // ============================================================================
 
+// ============================================================================
+// Concurrency Limits (all I/O-bound — tuned for limited-core deployments)
+// ============================================================================
+
+export const CONCURRENCY = {
+  /** Serper web/reddit search — lightweight JSON responses */
+  SEARCH: 8,
+  /** Scrape.do URL fetching — heavier payloads, credit-metered */
+  SCRAPER: 10,
+  /** Reddit API post/comment fetching — rate-limited by Reddit */
+  REDDIT: 5,
+  /** LLM extraction calls — configurable via LLM_CONCURRENCY env var */
+  LLM_EXTRACTION: safeParseInt(process.env.LLM_CONCURRENCY, 10, 1, 200),
+} as const;
+
 export const SCRAPER = {
-  MAX_CONCURRENT: 30,
   BATCH_SIZE: 30,
   MAX_TOKENS_BUDGET: 32000,
   MIN_URLS: 3,
@@ -202,7 +216,6 @@ export const SCRAPER = {
 // ============================================================================
 
 export const REDDIT = {
-  MAX_CONCURRENT: 10,
   BATCH_SIZE: 10,
   MAX_WORDS_PER_POST: 20_000,
   MAX_WORDS_TOTAL: 100_000,

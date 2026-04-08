@@ -4,7 +4,7 @@
  * Implements robust error handling that NEVER crashes
  */
 
-import { parseEnv } from '../config/index.js';
+import { parseEnv, CONCURRENCY } from '../config/index.js';
 import {
   classifyError,
   fetchWithTimeout,
@@ -20,7 +20,6 @@ import { mcpLog } from '../utils/logger.js';
 
 const SERPER_API_URL = 'https://google.serper.dev/search' as const;
 const DEFAULT_RESULTS_PER_KEYWORD = 10 as const;
-const MAX_SEARCH_CONCURRENCY = 8 as const;
 const MAX_RETRIES = 3 as const;
 
 // ── Data Interfaces ──
@@ -307,7 +306,7 @@ export class SearchClient {
     const results = await pMap(
       queries,
       q => this.searchReddit(q, dateAfter),
-      MAX_SEARCH_CONCURRENCY
+      CONCURRENCY.SEARCH
     );
 
     return new Map(queries.map((q, i) => [q, results[i] || []]));

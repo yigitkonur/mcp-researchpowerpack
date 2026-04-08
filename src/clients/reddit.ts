@@ -4,7 +4,7 @@
  * Implements robust error handling that NEVER crashes
  */
 
-import { REDDIT } from '../config/index.js';
+import { REDDIT, CONCURRENCY } from '../config/index.js';
 import { USER_AGENT_VERSION } from '../version.js';
 import { calculateBackoff } from '../utils/retry.js';
 import {
@@ -248,7 +248,7 @@ async function processBatch(
   const batchResults = await pMapSettled(
     batchUrls,
     url => client.getPost(url),
-    5,
+    CONCURRENCY.REDDIT,
   );
 
   for (let i = 0; i < batchResults.length; i++) {
@@ -431,7 +431,7 @@ export class RedditClient {
       const results = await pMap(
         urls,
         u => this.getPost(u).catch(e => e as Error),
-        5,
+        CONCURRENCY.REDDIT,
       );
       return new Map(urls.map((u, i) => [u, results[i]!]));
     }
