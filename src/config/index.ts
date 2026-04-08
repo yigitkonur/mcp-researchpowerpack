@@ -187,13 +187,13 @@ export function getMissingEnvMessage(capability: keyof Capabilities): string {
 
 export const CONCURRENCY = {
   /** Serper web/reddit search — lightweight JSON responses */
-  SEARCH: 8,
+  SEARCH: 80,
   /** Scrape.do URL fetching — heavier payloads, credit-metered */
-  SCRAPER: 10,
+  SCRAPER: 100,
   /** Reddit API post/comment fetching — rate-limited by Reddit */
-  REDDIT: 5,
+  REDDIT: 50,
   /** LLM extraction calls — configurable via LLM_CONCURRENCY env var */
-  LLM_EXTRACTION: safeParseInt(process.env.LLM_CONCURRENCY, 10, 1, 200),
+  LLM_EXTRACTION: safeParseInt(process.env.LLM_CONCURRENCY, 100, 1, 2000),
 } as const;
 
 export const SCRAPER = {
