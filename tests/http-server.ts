@@ -172,6 +172,35 @@ async function readJsonRpcBody(response: Response): Promise<any> {
   }
 }
 
+async function callTool(
+  baseUrl: string,
+  sessionId: string,
+  name: string,
+  args: Record<string, unknown>,
+  id: number,
+): Promise<any> {
+  const response = await postJsonRpc(
+    baseUrl,
+    {
+      jsonrpc: '2.0',
+      id,
+      method: 'tools/call',
+      params: { name, arguments: args },
+    },
+    sessionId,
+  );
+  return readJsonRpcBody(response);
+}
+
+function assertToolInputRejected(json: any, label: string): void {
+  const isJsonRpcError = json.error !== undefined;
+  const isToolError = json.result?.isError === true;
+  assert.ok(
+    isJsonRpcError || isToolError,
+    `${label}: expected validation failure, got success. Payload: ${JSON.stringify(json)}`,
+  );
+}
+
 async function assertProductionRequiresOriginProtection(): Promise<void> {
   const port = 3700 + Math.floor(Math.random() * 200);
   const { child, logs } = startServer({
@@ -268,6 +297,58 @@ async function main(): Promise<void> {
       'expected every tool to expose a description',
     );
 
+    // --- Compliance: annotations + outputSchema ---
+    const expectedAnnotationKeys = [
+      'readOnlyHint',
+      'idempotentHint',
+      'destructiveHint',
+      'openWorldHint',
+    ] as const;
+
+    for (const tool of toolsJson.result.tools as Array<{
+      name: string;
+      title?: string;
+      annotations?: Record<string, unknown>;
+      outputSchema?: Record<string, unknown>;
+      inputSchema?: Record<string, unknown>;
+    }>) {
+      assert.ok(
+        typeof tool.title === 'string' && tool.title.length > 0,
+        `${tool.name}: expected a non-empty title`,
+      );
+      assert.ok(tool.annotations, `${tool.name}: expected annotations object`);
+      for (const key of expectedAnnotationKeys) {
+        assert.ok(
+          key in (tool.annotations ?? {}),
+          `${tool.name}: missing annotation "${key}"`,
+        );
+      }
+      assert.equal(
+        tool.annotations?.readOnlyHint,
+        true,
+        `${tool.name}: expected readOnlyHint=true`,
+      );
+      assert.equal(
+        tool.annotations?.openWorldHint,
+        true,
+        `${tool.name}: expected openWorldHint=true`,
+      );
+      // inputSchema is required by the MCP spec
+      assert.ok(
+        tool.inputSchema && typeof tool.inputSchema === 'object',
+        `${tool.name}: expected a declared inputSchema`,
+      );
+      // outputSchema may or may not be exposed in tools/list depending on
+      // the protocol version and mcp-use version; if present, validate shape
+      if (tool.outputSchema) {
+        assert.equal(
+          typeof tool.outputSchema,
+          'object',
+          `${tool.name}: outputSchema should be an object if present`,
+        );
+      }
+    }
+
     const resourceResponse = await postJsonRpc(
       baseUrl,
       {
@@ -302,6 +383,49 @@ async function main(): Promise<void> {
     const capabilityJson = await readJsonRpcBody(capabilityResponse);
     assert.ok(capabilityJson.result?.isError, 'expected tool-level error result');
     assert.ok(JSON.stringify(capabilityJson.result).includes('SCRAPEDO_API_KEY'));
+
+    // --- Schema rejection tests ---
+    // web-search requires at least 1 keyword
+    assertToolInputRejected(
+      await callTool(baseUrl, sessionId, 'web-search', { keywords: [] }, 10),
+      'web-search empty keywords',
+    );
+
+    // search-reddit requires at least 3 queries
+    assertToolInputRejected(
+      await callTool(baseUrl, sessionId, 'search-reddit', { queries: ['one', 'two'] }, 11),
+      'search-reddit fewer than 3 queries',
+    );
+
+    // get-reddit-post requires at least 2 URLs
+    assertToolInputRejected(
+      await callTool(
+        baseUrl,
+        sessionId,
+        'get-reddit-post',
+        { urls: ['https://www.reddit.com/r/test/comments/abc/example/'] },
+        12,
+      ),
+      'get-reddit-post single URL',
+    );
+
+    // scrape-links requires at least 1 URL
+    assertToolInputRejected(
+      await callTool(baseUrl, sessionId, 'scrape-links', { urls: [] }, 13),
+      'scrape-links empty URLs',
+    );
+
+    // scrape-links rejects non-http protocols
+    assertToolInputRejected(
+      await callTool(
+        baseUrl,
+        sessionId,
+        'scrape-links',
+        { urls: ['ftp://example.com/file.txt'] },
+        14,
+      ),
+      'scrape-links rejects ftp scheme',
+    );
   } catch (error) {
     throw new Error(`HTTP integration test failed.\n\nLogs:\n${logs.value}\n\n${String(error)}`);
   } finally {
