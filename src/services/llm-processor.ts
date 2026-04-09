@@ -197,8 +197,8 @@ export async function processContentWithLLM(
     max_tokens: config.max_tokens || LLM_EXTRACTION.MAX_TOKENS,
   };
 
-  if (LLM_EXTRACTION.ENABLE_REASONING) {
-    requestBody.reasoning = { enabled: true };
+  if (LLM_EXTRACTION.REASONING_EFFORT !== 'none') {
+    requestBody.reasoning_effort = LLM_EXTRACTION.REASONING_EFFORT;
   }
 
   let lastError: StructuredError | undefined;
