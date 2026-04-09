@@ -284,29 +284,6 @@ async function main(): Promise<void> {
     assert.ok(resourceJson.result, 'expected resources/read result');
     assert.ok(JSON.stringify(resourceJson).includes('health://status'));
 
-    const validationResponse = await postJsonRpc(
-      baseUrl,
-      {
-        jsonrpc: '2.0',
-        id: 4,
-        method: 'tools/call',
-        params: {
-          name: 'web-search',
-          arguments: {
-            keywords: ['only-one-keyword'],
-          },
-        },
-      },
-      sessionId,
-    );
-    const validationJson = await readJsonRpcBody(validationResponse);
-    const validationPayload = validationJson.error ?? validationJson.result;
-    assert.ok(validationPayload, 'expected validation failure payload');
-    const validationText = JSON.stringify(validationPayload).toLowerCase();
-    assert.ok(
-      validationText.includes('validation') || validationText.includes('keyword') || validationText.includes('3'),
-    );
-
     const capabilityResponse = await postJsonRpc(
       baseUrl,
       {

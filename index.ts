@@ -194,9 +194,17 @@ async function main(): Promise<void> {
   if (allowedOrigins && allowedOrigins.length > 0) {
     startupLogger.info(`Host validation enabled for origins: ${allowedOrigins.join(', ')}`);
   } else if (isProduction) {
+    if (!baseUrl) {
+      startupLogger.error(
+        'Production mode requires ALLOWED_ORIGINS or MCP_URL to be set. ' +
+        'Without host validation, the server is vulnerable to DNS rebinding attacks. ' +
+        'Set ALLOWED_ORIGINS to the public deployment URL or custom domain.',
+      );
+      process.exit(1);
+    }
     startupLogger.warn(
       'Host validation is disabled because ALLOWED_ORIGINS is not set. ' +
-      'Set ALLOWED_ORIGINS to the public deployment URL or custom domain after the first deploy.',
+      'MCP_URL is set, so the server will start — but set ALLOWED_ORIGINS for full origin protection.',
     );
   } else {
     startupLogger.info('Host validation disabled for local development');
