@@ -181,45 +181,6 @@ export function formatBatchHeader(opts: BatchHeaderOptions): string {
 }
 
 // ============================================================================
-// List Formatter
-// ============================================================================
-
-export interface ListItem {
-  /** Item title/name */
-  readonly title: string;
-  /** Optional description */
-  readonly description?: string;
-  /** Optional metadata */
-  readonly meta?: string;
-  /** Optional URL */
-  readonly url?: string;
-}
-
-/**
- * Format a numbered list with optional metadata
- */
-export function formatList(items: ListItem[], options?: { numbered?: boolean }): string {
-  const numbered = options?.numbered ?? true;
-
-  const lines = items.map((item, i) => {
-    const prefix = numbered ? `${i + 1}. ` : '• ';
-    let line = `${prefix}**${item.title}**`;
-    if (item.meta) {
-      line += ` (${item.meta})`;
-    }
-    if (item.description) {
-      line += `\n   ${item.description}`;
-    }
-    if (item.url) {
-      line += `\n   ${item.url}`;
-    }
-    return line;
-  });
-
-  return lines.join('\n');
-}
-
-// ============================================================================
 // Duration Formatter
 // ============================================================================
 
@@ -232,14 +193,3 @@ export function formatDuration(ms: number): string {
   return `${(ms / MINUTES_MS).toFixed(1)}m`;
 }
 
-// ============================================================================
-// Text Truncation
-// ============================================================================
-
-/**
- * Truncate text to max length with ellipsis
- */
-export function truncateText(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text;
-  return text.slice(0, maxLength - 3) + '...';
-}
