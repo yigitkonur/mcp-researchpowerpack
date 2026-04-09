@@ -264,12 +264,22 @@ export const CTR_WEIGHTS: Record<number, number> = {
 // LLM Extraction Model (uses OPENROUTER for scrape-links AI extraction)
 // ============================================================================
 
+type LlmReasoningEffort = ReasoningEffort | 'none';
+
+function parseLlmReasoningEffort(value: string | undefined): LlmReasoningEffort {
+  if (value === 'none') return 'none';
+  if (value && VALID_REASONING_EFFORTS.includes(value as ReasoningEffort)) {
+    return value as ReasoningEffort;
+  }
+  return 'low';
+}
+
 interface LlmExtractionConfig {
   readonly MODEL: string;
   readonly BASE_URL: string;
   readonly API_KEY: string;
   readonly MAX_TOKENS: number;
-  readonly ENABLE_REASONING: boolean;
+  readonly REASONING_EFFORT: LlmReasoningEffort;
 }
 
 let cachedLlmExtraction: LlmExtractionConfig | null = null;
@@ -281,7 +291,7 @@ function getLlmExtraction(): LlmExtractionConfig {
     BASE_URL: process.env.LLM_EXTRACTION_BASE_URL || process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
     API_KEY: process.env.LLM_EXTRACTION_API_KEY || process.env.OPENROUTER_API_KEY || '',
     MAX_TOKENS: 8000,
-    ENABLE_REASONING: process.env.LLM_ENABLE_REASONING !== 'false',
+    REASONING_EFFORT: parseLlmReasoningEffort(process.env.LLM_EXTRACTION_REASONING),
   };
   return cachedLlmExtraction;
 }
