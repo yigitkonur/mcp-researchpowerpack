@@ -207,11 +207,6 @@ export const CONCURRENCY = {
 
 export const SCRAPER = {
   BATCH_SIZE: 30,
-  MAX_TOKENS_BUDGET: 32000,
-  MIN_URLS: 3,
-  MAX_URLS: 50,
-  RETRY_COUNT: 3,
-  RETRY_DELAYS: [2000, 4000, 8000] as const,
   EXTRACTION_PREFIX: 'Extract from document only — never hallucinate or add external knowledge.',
   EXTRACTION_SUFFIX: 'First line = content, not preamble. No confirmation messages.',
 } as const;
