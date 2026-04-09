@@ -391,22 +391,16 @@ async function main(): Promise<void> {
       'web-search empty keywords',
     );
 
-    // search-reddit requires at least 3 queries
+    // search-reddit requires at least 1 query
     assertToolInputRejected(
-      await callTool(baseUrl, sessionId, 'search-reddit', { queries: ['one', 'two'] }, 11),
-      'search-reddit fewer than 3 queries',
+      await callTool(baseUrl, sessionId, 'search-reddit', { queries: [] }, 11),
+      'search-reddit empty queries',
     );
 
-    // get-reddit-post requires at least 2 URLs
+    // get-reddit-post requires at least 1 URL
     assertToolInputRejected(
-      await callTool(
-        baseUrl,
-        sessionId,
-        'get-reddit-post',
-        { urls: ['https://www.reddit.com/r/test/comments/abc/example/'] },
-        12,
-      ),
-      'get-reddit-post single URL',
+      await callTool(baseUrl, sessionId, 'get-reddit-post', { urls: [] }, 12),
+      'get-reddit-post empty URLs',
     );
 
     // scrape-links requires at least 1 URL

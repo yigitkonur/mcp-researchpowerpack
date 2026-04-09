@@ -12,10 +12,10 @@ export const searchRedditParamsSchema = z.object({
         .min(1, { message: 'search-reddit: Query cannot be empty' })
         .describe('A single Reddit search query targeting one specific angle (e.g., "MCP server best practices", "r/ClaudeAI MCP setup guide", "MCP vs REST 2025"). Keep each query focused on one facet.'),
     )
-    .min(3, { message: 'search-reddit: Minimum 3 diverse queries required' })
+    .min(1, { message: 'search-reddit: At least 1 query is required' })
     .max(50, { message: 'search-reddit: Maximum 50 queries allowed' })
     .describe(
-      'Array of 3–50 diverse Reddit search queries (minimum 3 required — fewer will error). Each query targets a different search angle: direct topic, "best of" lists, comparisons, pain points, subreddit-specific (e.g., "r/programming topic"), or year-specific. The 3-query minimum enforces research depth — this tool aggregates results across queries for consensus ranking, so single-query lookups are not supported. More queries = better signal-to-noise.',
+      'Array of 1–50 Reddit search queries. RECOMMENDED: 3–7 for solid consensus ranking (results are aggregated across queries and URLs appearing in multiple searches are flagged as high-confidence). Each query should target a different angle: direct topic, "best of" lists, comparisons, pain points, subreddit-specific (e.g., "r/programming topic"), or year-specific. Single-query lookups work but produce no consensus signal. More queries = better signal-to-noise.',
     ),
   date_after: z
     .string()
@@ -37,9 +37,9 @@ export const getRedditPostParamsSchema = z.object({
         .url({ message: 'get-reddit-post: Each URL must be valid' })
         .describe('A full Reddit post URL (e.g., "https://www.reddit.com/r/subreddit/comments/id/title/"). Must be a valid URL pointing to a Reddit post. Typically sourced from search-reddit results.'),
     )
-    .min(2, { message: 'get-reddit-post: Minimum 2 Reddit post URLs required' })
+    .min(1, { message: 'get-reddit-post: At least 1 Reddit post URL is required' })
     .max(50, { message: 'get-reddit-post: Maximum 50 Reddit post URLs allowed' })
-    .describe('Array of 2–50 Reddit post URLs (minimum 2 required — fewer will error). This tool is built for comparative research across multiple discussions, not single-post lookups. Supply URLs from search-reddit output or any Reddit post links. Each post gets up to 20K words of threaded comments within a 100K total word budget. More URLs = broader community perspective but less depth per post.'),
+    .describe('Array of 1–50 Reddit post URLs. RECOMMENDED: 2–10 for comparative research across multiple discussions. Supply URLs from search-reddit output or any Reddit post links. Each post gets up to 20K words of threaded comments within a 100K total word budget. More URLs = broader community perspective but less depth per post.'),
   fetch_comments: z
     .boolean()
     .default(true)

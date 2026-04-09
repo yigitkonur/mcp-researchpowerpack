@@ -491,7 +491,7 @@ export function registerSearchRedditTool(server: MCPServer): void {
       name: 'search-reddit',
       title: 'Search Reddit',
       description:
-        'Search Reddit for community discussions using 3–50 diverse queries and return consensus-ranked Reddit post URLs. Minimum 3 queries required — each query should target a different angle (e.g., direct topic, "best of" lists, comparisons, pain points, subreddit-specific, year-specific). More queries = better consensus detection across results. Output is a ranked URL list ready to pipe into get-reddit-post.',
+        'Search Reddit for community discussions using 1–50 queries and return consensus-ranked Reddit post URLs. Supply 3–7 diverse queries for best consensus detection — each targeting a different angle (direct topic, "best of" lists, comparisons, pain points, subreddit-specific, year-specific). Single queries work but produce no cross-query consensus signal. Output is a ranked URL list ready to pipe into get-reddit-post.',
       schema: searchRedditParamsSchema,
       outputSchema: searchRedditOutputSchema,
       annotations: {
@@ -522,7 +522,7 @@ export function registerGetRedditPostTool(server: MCPServer): void {
       name: 'get-reddit-post',
       title: 'Get Reddit Post',
       description:
-        'Fetch full Reddit posts with complete comment trees from 2–50 Reddit URLs. Minimum 2 URLs required — this tool is designed for comparative research across multiple discussions, not single-post lookups. Each post gets up to 20K words of comment depth (100K total budget). Comments are threaded with author, score, and OP markers. Best used after search-reddit to deep-dive into the top-ranked URLs. Keep use_llm=false (default) to get raw threaded comments — only flip to true when you have lots of posts and individual comments don\'t matter.',
+        'Fetch full Reddit posts with complete comment trees from 1–50 Reddit URLs. Recommended: 2–10 URLs for comparative research across discussions. Each post gets up to 20K words of comment depth (100K total budget). Comments are threaded with author, score, and OP markers. Best used after search-reddit to deep-dive into the top-ranked URLs. Keep use_llm=false (default) to get raw threaded comments — only flip to true when you have lots of posts and individual comments don\'t matter.',
       schema: getRedditPostParamsSchema,
       outputSchema: getRedditPostOutputSchema,
       annotations: {
