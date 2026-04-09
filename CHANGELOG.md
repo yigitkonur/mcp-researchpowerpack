@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.11.0] - 2026-04-09
+
+### Changed (BREAKING)
+- `structuredContent` on every tool response no longer mirrors the rendered markdown. Clients that read `result.structuredContent.content` must switch to `result.content[0].text`. The top-level `content` block is unchanged.
+- Output schemas (`webSearchOutputSchema`, `scrapeLinksOutputSchema`, `searchRedditOutputSchema`, `getRedditPostOutputSchema`) now expose only `metadata` at the top level.
+
+### Added
+- Production fail-fast guard: server exits with code 1 if `NODE_ENV=production` and neither `ALLOWED_ORIGINS` nor `MCP_URL` is set (DNS rebinding protection).
+- Integration test coverage for schema-rejection on every tool (empty/too-few inputs, invalid URL schemes).
+- Integration test coverage for tool annotations (`readOnlyHint`, `idempotentHint`, `destructiveHint`, `openWorldHint`) and `inputSchema` declaration.
+
+### Removed
+- STDIO-era dead code in `src/tools/utils.ts` (`ToolLogger` type, `safeLog`, `formatRetryHint`, `formatToolError`, `validateNonEmptyArray`, `validateArrayBounds`, `buildBatchHeader`, `buildStatusLine`).
+- Unused `safeLog`, `createToolLogger`, and `ToolLogger` type from `src/utils/logger.ts`.
+- Unused `formatList`, `truncateText`, and `ListItem` type from `src/utils/response.ts`.
+- Unused `SCRAPER` config constants (`MIN_URLS`, `MAX_URLS`, `MAX_TOKENS_BUDGET`, `RETRY_COUNT`, `RETRY_DELAYS`). `SCRAPER.MIN_URLS: 3` had been contradicting the real schema minimum of `1`.
+
+### Refactored
+- Reddit schemas moved from inline in `src/tools/reddit.ts` to `src/schemas/reddit.ts`, matching `web-search.ts` and `scrape-links.ts` and the `CLAUDE.md` convention.
+- `src/services/markdown-cleaner.ts` and `src/clients/reddit.ts` now log through the mcp-use `Logger` instead of raw `console.error`.
+
+### Fixed
+- `tests/http-server.ts` no longer passes its `web-search` validation assertion by accident. The old `.includes('3')` check matched any digit in unrelated error text; it's replaced with deterministic empty-keywords rejection.
+
 ## [3.6.2] - 2026-02-01
 
 ### Added
