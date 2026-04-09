@@ -190,7 +190,6 @@ export async function handleSearchReddit(
     await reporter.log('info', `Collected ${totalResults} Reddit results across ${limited.length} queries`);
     await reporter.progress(85, 100, 'Ranking Reddit results');
     return toolSuccess(content, {
-      content,
       metadata: {
         query_count: limited.length,
         total_results: totalResults,
@@ -467,7 +466,6 @@ export async function handleGetRedditPosts(
     );
 
     return toolSuccess(content, {
-      content,
       metadata: {
         total_urls: urls.length,
         successful: processResult.successful,
