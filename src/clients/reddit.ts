@@ -105,7 +105,8 @@ interface RedditCommentData {
 type RedditPostResponse = [RedditListing<RedditPostData>, RedditListing<RedditCommentData>];
 
 /** Max comments to fetch per post from Reddit API */
-const FETCH_LIMIT = REDDIT.FETCH_LIMIT_PER_POST;
+/** Reddit API caps at 500 comments per request */
+const FETCH_LIMIT = 500;
 
 // ============================================================================
 // Module-Level Token Cache (shared across all RedditClient instances)

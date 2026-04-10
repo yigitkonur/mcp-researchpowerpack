@@ -9,28 +9,32 @@ const keywordSchema = z
     k => k.trim().length > 0,
     { message: 'web-search: Keyword cannot be whitespace only' }
   )
-  .describe('A single Google search query (1–500 chars). Each keyword runs as a separate parallel search. Use varied angles: direct topic, comparisons, "best of" lists, year-specific, site-specific (e.g., "site:github.com topic").');
+  .describe('A single Google search query (1-500 chars). Each keyword runs as a separate parallel search. Use varied angles: direct topic, comparisons, "best of" lists, year-specific, site-specific (e.g., "site:github.com topic").');
 
 // Input schema for web-search tool
-const keywordsSchema = z
-  .array(keywordSchema, {
-    error: 'web-search: Keywords must be an array',
-  })
-  .min(1, { message: 'web-search: At least 1 keyword required' })
-  .max(100, { message: 'web-search: Maximum 100 keywords allowed per request' })
-  .describe('Array of 1–100 search keywords. RECOMMENDED: 3–7 for solid consensus ranking, up to 20 for thorough coverage. Each keyword runs as a separate Google search in parallel. Results are aggregated and URLs appearing in multiple searches are flagged as high-confidence consensus matches. Supply <1 and you get an error; >100 is rejected.');
+export const webSearchParamsSchema = z.object({
+  keywords: z
+    .array(keywordSchema, { error: 'web-search: Keywords must be an array' })
+    .min(1, { message: 'web-search: At least 1 keyword required' })
+    .max(100, { message: 'web-search: Maximum 100 keywords allowed per request' })
+    .describe('Array of 1-100 search keywords. Each runs as a separate Google search in parallel. Results are aggregated, deduplicated, and ranked by CTR-weighted consensus. RECOMMENDED: 3-7 keywords for solid consensus, up to 20 for thorough coverage.'),
+  objective: z
+    .string({ error: 'web-search: objective is required' })
+    .min(5, { message: 'web-search: objective must be at least 5 characters' })
+    .max(500, { message: 'web-search: objective too long (max 500 characters)' })
+    .describe('REQUIRED. Describes what you are looking for. An LLM classifies each search result into 3 relevance tiers (highly relevant, maybe relevant, other) using only titles, snippets, and site names — no URLs are fetched. Be specific: "open-source MCP server implementations in TypeScript" not "MCP servers". Also generates a synthesis paragraph summarizing key findings.'),
+  raw: z
+    .boolean({ error: 'web-search: raw must be a boolean' })
+    .default(false)
+    .describe('When true, skip LLM classification and return the traditional CTR-weighted consensus-ranked URL list. Use when you need raw context or the LLM endpoint is unavailable. Default: false (LLM classification enabled).'),
+}).strict();
 
-const webSearchParamsShape = {
-  keywords: keywordsSchema,
-};
-
-export const webSearchParamsSchema = z.object(webSearchParamsShape).strict();
 export type WebSearchParams = z.infer<typeof webSearchParamsSchema>;
 
 export const webSearchOutputSchema = z.object({
   content: z
     .string()
-    .describe('Formatted markdown report containing ranked URLs with consensus markers and per-query results.'),
+    .describe('Markdown report. With LLM: 3-tier table (highly relevant / maybe relevant / other) with synthesis. With raw=true: traditional CTR-ranked list.'),
   metadata: z.object({
     total_keywords: z
       .number()
@@ -41,7 +45,7 @@ export const webSearchOutputSchema = z.object({
       .number()
       .int()
       .nonnegative()
-      .describe('Total number of ranked search results included across shown queries.'),
+      .describe('Total unique URLs found across all searches.'),
     execution_time_ms: z
       .number()
       .int()
@@ -65,6 +69,13 @@ export const webSearchOutputSchema = z.object({
       .nonnegative()
       .optional()
       .describe('Minimum frequency required for a URL to be considered consensus.'),
+    llm_classified: z
+      .boolean()
+      .describe('Whether LLM classification was applied to the results.'),
+    llm_error: z
+      .string()
+      .optional()
+      .describe('LLM classification error message if classification failed and fell back to raw output.'),
     coverage_summary: z
       .array(z.object({
         keyword: z.string().describe('The search keyword.'),

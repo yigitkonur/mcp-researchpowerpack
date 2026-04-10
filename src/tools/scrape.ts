@@ -172,14 +172,16 @@ function processScrapeResults(
 
 async function processItemsWithLlm(
   successItems: ProcessedResult[],
-  params: ScrapeLinksParams,
-  enhancedInstruction: string | undefined,
+  enhancedInstruction: string,
   tokensPerUrl: number,
   llmProcessor: ReturnType<typeof createLLMProcessor>,
 ): Promise<{ items: ProcessedResult[]; llmErrors: number }> {
   let llmErrors = 0;
 
-  if (!params.use_llm || !llmProcessor || successItems.length === 0) {
+  if (!llmProcessor || successItems.length === 0) {
+    if (!llmProcessor && successItems.length > 0) {
+      mcpLog('warning', 'LLM unavailable (LLM_EXTRACTION_API_KEY not set). Returning raw scraped content.', 'scrape');
+    }
     return { items: successItems, llmErrors };
   }
 
@@ -190,7 +192,7 @@ async function processItemsWithLlm(
 
     const llmResult = await processContentWithLLM(
       item.content,
-      { use_llm: params.use_llm, what_to_extract: enhancedInstruction, max_tokens: tokensPerUrl },
+      { use_llm: true, what_to_extract: enhancedInstruction, max_tokens: tokensPerUrl },
       llmProcessor,
     );
 
@@ -200,7 +202,7 @@ async function processItemsWithLlm(
     }
 
     llmErrors++;
-    mcpLog('warning', `LLM extraction skipped for ${item.url}: ${llmResult.error || 'unknown reason'}`, 'scrape');
+    mcpLog('warning', `LLM extraction failed for ${item.url}: ${llmResult.error || 'unknown reason'}`, 'scrape');
     return item;
   }, CONCURRENCY.LLM_EXTRACTION);
 
@@ -321,9 +323,7 @@ export async function handleScrapeLinks(
     ]);
   }
 
-  const enhancedInstruction = params.use_llm
-    ? enhanceExtractionInstruction(params.what_to_extract)
-    : undefined;
+  const enhancedInstruction = enhanceExtractionInstruction(params.what_to_extract);
 
   await reporter.progress(35, 100, 'Fetching page content');
   const results = await clients.client.scrapeMultiple(validUrls, { timeout: params.timeout });
@@ -333,11 +333,11 @@ export async function handleScrapeLinks(
 
   const { successItems, failedContents, metrics } = processScrapeResults(results, invalidUrls);
 
-  if (params.use_llm && successItems.length > 0) {
-    await reporter.progress(80, 100, 'Running optional LLM extraction over scraped pages');
+  if (successItems.length > 0) {
+    await reporter.progress(80, 100, 'Running LLM extraction over scraped pages');
   }
   const { items: processedItems, llmErrors } = await processItemsWithLlm(
-    successItems, params, enhancedInstruction, tokensPerUrl, clients.llmProcessor,
+    successItems, enhancedInstruction, tokensPerUrl, clients.llmProcessor,
   );
 
   const contents = assembleContentEntries(processedItems, failedContents);
@@ -367,7 +367,7 @@ export function registerScrapeLinksTool(server: MCPServer): void {
       name: 'scrape-links',
       title: 'Scrape Links',
       description:
-        'Scrape 1–50 web pages over HTTP, clean HTML to markdown, and optionally run AI extraction to pull exactly what you need. Token budget (32K) is split across URLs: 3 URLs get ~10K tokens each (deep), 10 get ~3K (balanced), 50 get ~640 (scan). AI extraction is on by default — set use_llm=false only for raw content debugging. Use what_to_extract to target specific data (e.g., "pricing tiers | feature comparison | API limits").',
+        'Scrape 1-50 web pages and run LLM extraction on each. Provide what_to_extract with specific targets (e.g., "Extract pricing tiers | feature limits | API rate limits"). Token budget (32K) is split across URLs: 3 URLs get ~10K tokens each (deep), 10 get ~3K (balanced), 50 get ~640 (scan).',
       schema: scrapeLinksParamsSchema,
       outputSchema: scrapeLinksOutputSchema,
       annotations: {
