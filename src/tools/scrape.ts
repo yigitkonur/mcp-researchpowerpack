@@ -323,7 +323,7 @@ export async function handleScrapeLinks(
   const enhancedInstruction = enhanceExtractionInstruction(params.extract);
 
   await reporter.progress(35, 100, 'Fetching page content');
-  const results = await clients.client.scrapeMultiple(validUrls, { timeout: 300 });
+  const results = await clients.client.scrapeMultiple(validUrls, { timeout: 60 });
   mcpLog('info', `Scraping complete. Processing ${results.length} results...`, 'scrape');
   await reporter.log('info', `Fetched ${results.length} scrape response(s) from the provider`);
   await reporter.progress(60, 100, 'Cleaning and classifying scrape results');
