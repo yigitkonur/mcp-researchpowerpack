@@ -31,6 +31,15 @@ const DEFAULT_REDDIT_MIN_CONSENSUS_URLS = 3 as const;
 /** High consensus frequency threshold for enhanced output labeling */
 const HIGH_CONSENSUS_THRESHOLD = 4 as const;
 
+/** Maximum number of alternative snippets to retain per URL */
+const MAX_ALT_SNIPPETS = 3 as const;
+
+/** Consistency penalty cap — bounds the impact of position variance */
+const MAX_CONSISTENCY_PENALTY = 0.15 as const;
+
+/** Standard deviation normalizer — stdDev of 5+ gets full penalty */
+const CONSISTENCY_STDDEV_SCALE = 5 as const;
+
 /**
  * Aggregated URL data structure
  */
@@ -38,6 +47,7 @@ interface AggregatedUrl {
   readonly url: string;
   title: string;
   snippet: string;
+  readonly allSnippets: string[];
   frequency: number;
   readonly positions: number[];
   readonly queries: string[];
@@ -46,12 +56,27 @@ interface AggregatedUrl {
 }
 
 /**
- * Ranked URL with normalized score
+ * Compute position statistics for consistency scoring
+ */
+function computePositionStats(positions: number[]): { mean: number; stdDev: number; consistencyMultiplier: number } {
+  if (positions.length <= 1) {
+    return { mean: positions[0] ?? 0, stdDev: 0, consistencyMultiplier: 1.0 };
+  }
+  const mean = positions.reduce((a, b) => a + b, 0) / positions.length;
+  const variance = positions.reduce((sum, p) => sum + (p - mean) ** 2, 0) / (positions.length - 1);
+  const stdDev = Math.sqrt(variance);
+  const consistencyMultiplier = 1.0 - MAX_CONSISTENCY_PENALTY * Math.min(stdDev / CONSISTENCY_STDDEV_SCALE, 1.0);
+  return { mean, stdDev, consistencyMultiplier };
+}
+
+/**
+ * Ranked URL with normalized score and enriched signals
  */
 interface RankedUrl {
   readonly url: string;
   readonly title: string;
   readonly snippet: string;
+  readonly allSnippets: string[];
   readonly rank: number;
   readonly score: number;
   readonly frequency: number;
@@ -59,6 +84,9 @@ interface RankedUrl {
   readonly queries: string[];
   readonly bestPosition: number;
   readonly isConsensus: boolean;
+  readonly coverageRatio: number;
+  readonly positionStdDev: number;
+  readonly consistencyMultiplier: number;
 }
 
 /**
@@ -103,6 +131,14 @@ function aggregateResults(searches: KeywordSearchResult[]): Map<string, Aggregat
         const prevBest = existing.bestPosition;
         existing.bestPosition = Math.min(existing.bestPosition, result.position);
         existing.totalScore += getCtrWeight(result.position);
+        // Collect distinct snippets (up to MAX_ALT_SNIPPETS)
+        if (
+          result.snippet &&
+          existing.allSnippets.length < MAX_ALT_SNIPPETS &&
+          !existing.allSnippets.some(s => s === result.snippet)
+        ) {
+          existing.allSnippets.push(result.snippet);
+        }
         // Keep best title/snippet (from highest ranking position)
         if (result.position < prevBest) {
           existing.title = result.title;
@@ -113,6 +149,7 @@ function aggregateResults(searches: KeywordSearchResult[]): Map<string, Aggregat
           url: result.link,
           title: result.title,
           snippet: result.snippet,
+          allSnippets: result.snippet ? [result.snippet] : [],
           frequency: 1,
           positions: [result.position],
           queries: [search.keyword],
@@ -156,130 +193,167 @@ function countByFrequency(
 }
 
 /**
- * Calculate weighted scores and normalize to 100.0
- * Returns ALL URLs sorted by score with rank assignments and consensus marking
+ * Calculate weighted scores with consistency multiplier, normalize to 100.0.
+ * Returns ALL URLs sorted by composite score with rank assignments and consensus marking.
  */
-function calculateWeightedScores(urls: AggregatedUrl[], consensusThreshold: number): RankedUrl[] {
+function calculateWeightedScores(urls: AggregatedUrl[], consensusThreshold: number, totalQueries: number): RankedUrl[] {
   if (urls.length === 0) return [];
 
-  // Sort by total score descending
-  const sorted = [...urls].sort((a, b) => b.totalScore - a.totalScore);
+  // Compute composite scores (base CTR × consistency multiplier)
+  const scored = urls.map(url => {
+    const stats = computePositionStats(url.positions);
+    const compositeScore = url.totalScore * stats.consistencyMultiplier;
+    return { url, compositeScore, stats };
+  });
 
-  // Find max score for normalization
-  const maxScore = sorted[0]!.totalScore;
+  // Sort by composite score descending
+  scored.sort((a, b) => b.compositeScore - a.compositeScore);
 
-  // Map to ranked URLs with normalized scores
-  return sorted.map((url, index) => ({
+  // Find max for normalization
+  const maxScore = scored[0]!.compositeScore;
+
+  // Map to ranked URLs with all signals
+  return scored.map(({ url, compositeScore, stats }, index) => ({
     url: url.url,
     title: url.title,
     snippet: url.snippet,
+    allSnippets: url.allSnippets,
     rank: index + 1,
-    score: maxScore > 0 ? (url.totalScore / maxScore) * 100 : 0,
+    score: maxScore > 0 ? (compositeScore / maxScore) * 100 : 0,
     frequency: url.frequency,
     positions: url.positions,
     queries: url.queries,
     bestPosition: url.bestPosition,
     isConsensus: url.frequency >= consensusThreshold,
+    coverageRatio: totalQueries > 0 ? url.frequency / totalQueries : 0,
+    positionStdDev: stats.stdDev,
+    consistencyMultiplier: stats.consistencyMultiplier,
   }));
 }
 
 /**
- * Mark consensus status for a URL
- * Returns "✓" if frequency >= threshold, else "✗"
+ * Mark consensus status for a URL against a given threshold.
+ * Returns "CONSENSUS" if frequency >= threshold, else empty string.
  */
-export function markConsensus(frequency: number): string {
-  return frequency >= WEB_CONSENSUS_THRESHOLD ? '✓' : '✗';
+export function markConsensus(frequency: number, threshold: number = WEB_CONSENSUS_THRESHOLD): string {
+  return frequency >= threshold ? 'CONSENSUS' : '';
+}
+
+/** Maximum keywords to show in the coverage table before collapsing */
+const COVERAGE_TABLE_MAX_ROWS = 20 as const;
+
+/**
+ * Consistency label based on position standard deviation
+ */
+function consistencyLabel(stdDev: number, frequency: number): string {
+  if (frequency <= 1) return 'n/a';
+  if (stdDev < 1.5) return 'high';
+  if (stdDev < 3.5) return 'medium';
+  return 'variable';
 }
 
 /**
- * Generate justification for why a URL is ranked at its position
+ * Generate a unified output where every URL appears exactly once.
+ * Replaces the old generateEnhancedOutput + per-query section combo.
  */
-function generateJustification(url: RankedUrl, rank: number): string {
-  const parts: string[] = [];
-  
-  if (url.frequency >= HIGH_CONSENSUS_THRESHOLD) {
-    parts.push(`Appeared in ${url.frequency} different searches showing strong cross-query relevance`);
-  } else if (url.frequency >= WEB_CONSENSUS_THRESHOLD) {
-    parts.push(`Found across ${url.frequency} searches indicating solid topical coverage`);
-  } else {
-    parts.push(`Appeared in ${url.frequency} search${url.frequency > 1 ? 'es' : ''}`);
-  }
-  
-  if (url.bestPosition === 1) {
-    parts.push('ranked #1 in at least one search');
-  } else if (url.bestPosition <= 3) {
-    parts.push(`best position was top-3 (#${url.bestPosition})`);
-  }
-  
-  return parts.join(', ') + '.';
-}
-
-/**
- * Generate enhanced narrative output for consensus URLs
- */
-export function generateEnhancedOutput(
+export function generateUnifiedOutput(
   rankedUrls: RankedUrl[],
   allKeywords: string[],
+  keywordResults: KeywordSearchResult[],
   totalUniqueUrls: number,
   frequencyThreshold: number,
-  thresholdNote?: string
+  thresholdNote?: string,
 ): string {
   const lines: string[] = [];
-  
-  // Header
   const consensusCount = rankedUrls.filter(u => u.isConsensus).length;
-  lines.push(`## Aggregated Search Results (${allKeywords.length} Queries → ${rankedUrls.length} Unique URLs)`);
-  lines.push('');
-  lines.push(`Based on ${allKeywords.length} distinct searches, we found **${rankedUrls.length} unique resources** (${consensusCount} appear in multiple queries).`);
-  lines.push('');
 
+  // Header
+  lines.push(`## Web Search Results (${allKeywords.length} queries, ${totalUniqueUrls} unique URLs)`);
+  lines.push('');
   if (thresholdNote) {
     lines.push(`> ${thresholdNote}`);
     lines.push('');
   }
 
-  // All ranked resources
-  lines.push('### 🥇 Ranked Resources');
-  lines.push('');
-
+  // Ranked URL list — every URL exactly once
   for (const url of rankedUrls) {
-    const highConsensus = url.frequency >= HIGH_CONSENSUS_THRESHOLD ? ' ⭐ HIGHEST CONSENSUS' : url.isConsensus ? ' ✓ CONSENSUS' : '';
-    lines.push(`#### #${url.rank}: ${url.title} (Score: ${url.score.toFixed(1)})${highConsensus}`);
-    
-    // Appeared in queries
-    const queriesList = url.queries.map(q => `"${q}"`).join(', ');
-    lines.push(`- **Appeared in:** ${url.frequency} queries (${queriesList})`);
-    
-    // Best ranking
-    lines.push(`- **Best ranking:** Position ${url.bestPosition}`);
-    
-    // Description
-    lines.push(`- **Description:** ${url.snippet}`);
-    
-    // Justification
-    lines.push(`- **Why it's #${url.rank}:** ${generateJustification(url, url.rank)}`);
-    
-    // URL
-    lines.push(`- **URL:** ${url.url}`);
+    const consensusTag = url.frequency >= HIGH_CONSENSUS_THRESHOLD
+      ? ' CONSENSUS+++'
+      : url.isConsensus
+        ? ' CONSENSUS'
+        : '';
+    const coveragePct = Math.round(url.coverageRatio * 100);
+    const consistency = consistencyLabel(url.positionStdDev, url.frequency);
+
+    lines.push(`**${url.rank}. [${url.title}](${url.url})**${consensusTag}`);
+    lines.push(`Score: ${url.score.toFixed(1)} | Seen in: ${url.frequency}/${allKeywords.length} queries (${coveragePct}%) | Best pos: #${url.bestPosition} | Consistency: ${consistency}`);
+    lines.push(`Queries: ${url.queries.map(q => `"${q}"`).join(', ')}`);
+    lines.push(`> ${url.snippet}`);
+
+    // Alt snippets (if multiple distinct snippets were collected)
+    if (url.allSnippets.length > 1) {
+      const alts = url.allSnippets
+        .filter(s => s !== url.snippet)
+        .slice(0, 3)
+        .map(s => s.length > 100 ? s.slice(0, 97) + '...' : s);
+      if (alts.length > 0) {
+        lines.push(`Alt: ${alts.map(s => `"${s}"`).join(' | ')}`);
+      }
+    }
+
     lines.push('');
   }
-  
-  // Metadata section
+
+  // Keyword coverage section
   lines.push('---');
-  lines.push('');
-  lines.push('### 📈 Metadata');
-  lines.push('');
-  lines.push(`- **Total Queries:** ${allKeywords.length} (${allKeywords.join(', ')})`);
-  
-  // Sort all URLs by frequency for the unique URLs list
-  const sortedByFreq = [...rankedUrls].sort((a, b) => b.frequency - a.frequency);
-  const urlFreqList = sortedByFreq
-    .map(u => `${u.url} (${u.frequency}x)`)
-    .join(', ');
-  
-  lines.push(`- **Unique URLs Found:** ${totalUniqueUrls} — top by frequency: ${urlFreqList}`);
-  lines.push(`- **Consensus Threshold:** ≥${frequencyThreshold} appearances`);
-  lines.push('');
+
+  if (allKeywords.length <= COVERAGE_TABLE_MAX_ROWS) {
+    // Full table for ≤20 keywords
+    lines.push('### Keyword Coverage');
+    lines.push('| Keyword | Results | Top URL | Top Pos |');
+    lines.push('|---------|---------|---------|---------|');
+
+    for (const search of keywordResults) {
+      const topResult = search.results[0];
+      let topDomain = '';
+      if (topResult) {
+        try {
+          topDomain = new URL(topResult.link).hostname.replace(/^www\./, '');
+        } catch {
+          topDomain = topResult.link;
+        }
+      }
+      lines.push(`| "${search.keyword}" | ${search.results.length} | ${topDomain || '—'} | ${topResult ? `#${topResult.position}` : '—'} |`);
+    }
+    lines.push('');
+  } else {
+    // Collapsed summary for >20 keywords
+    const goodCount = keywordResults.filter(s => s.results.length >= 3).length;
+    lines.push(`### Keyword Coverage: ${goodCount}/${allKeywords.length} keywords returned 3+ results`);
+    lines.push('');
+  }
+
+  // Low-yield keywords
+  const lowYield = keywordResults.filter(s => s.results.length <= 1);
+  if (lowYield.length > 0) {
+    lines.push(`**Low-yield keywords** (0-1 results): ${lowYield.map(s => `\`${s.keyword}\``).join(', ')}`);
+    lines.push('');
+  }
+
+  // Related searches (merged and deduplicated)
+  const allRelated = new Set<string>();
+  for (const search of keywordResults) {
+    if (search.related) {
+      for (const r of search.related) {
+        allRelated.add(r);
+      }
+    }
+  }
+  if (allRelated.size > 0) {
+    const related = [...allRelated].slice(0, 10);
+    lines.push(`**Related searches:** ${related.map(r => `\`${r}\``).join(', ')}`);
+    lines.push('');
+  }
 
   return lines.join('\n');
 }
@@ -315,7 +389,7 @@ export function aggregateAndRank(
 
   // Rank ALL URLs, marking consensus based on determined threshold
   const allUrls = [...urlMap.values()];
-  const rankedUrls = calculateWeightedScores(allUrls, usedThreshold);
+  const rankedUrls = calculateWeightedScores(allUrls, usedThreshold, totalQueries);
 
   return {
     rankedUrls,

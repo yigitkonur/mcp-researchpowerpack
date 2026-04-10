@@ -15,16 +15,11 @@ import {
 import { SearchClient } from '../clients/search.js';
 import {
   aggregateAndRank,
-  buildUrlLookup,
-  lookupUrl,
-  generateEnhancedOutput,
-  markConsensus,
+  generateUnifiedOutput,
 } from '../utils/url-aggregator.js';
-import { CTR_WEIGHTS } from '../config/index.js';
 import { classifyError } from '../utils/errors.js';
 import {
   mcpLog,
-  formatSuccess,
   formatError,
   formatDuration,
 } from './utils.js';
@@ -37,13 +32,6 @@ import {
   type ToolExecutionResult,
   type ToolReporter,
 } from './mcp-helpers.js';
-
-function getPositionScore(position: number): number {
-  if (position >= 1 && position <= 10) {
-    return CTR_WEIGHTS[position] ?? 0;
-  }
-  return Math.max(0, 10 - (position - 10) * 0.5);
-}
 
 // --- Internal types ---
 
@@ -66,103 +54,58 @@ async function executeSearches(keywords: string[]): Promise<SearchResponse> {
   return client.searchMultiple(keywords);
 }
 
-function processAndRankResults(response: SearchResponse): {
+function processResults(response: SearchResponse): {
   aggregation: SearchAggregation;
-  urlLookup: ReturnType<typeof buildUrlLookup>;
   consensusUrls: SearchAggregation['rankedUrls'];
 } {
   const aggregation = aggregateAndRank(response.searches, 5);
-  // Build lookup from ALL ranked URLs so per-query entries can show consensus info
-  const urlLookup = buildUrlLookup(aggregation.rankedUrls);
   const consensusUrls = aggregation.rankedUrls.filter(u => u.isConsensus);
-  return { aggregation, urlLookup, consensusUrls };
+  return { aggregation, consensusUrls };
 }
 
-function buildConsensusSection(
+function buildOutputMarkdown(
   keywords: string[],
   aggregation: SearchAggregation,
+  searches: SearchResponse['searches'],
 ): string {
-  // Always show all ranked URLs (consensus-marked within)
-  return generateEnhancedOutput(
-    aggregation.rankedUrls, keywords, aggregation.totalUniqueUrls,
+  return generateUnifiedOutput(
+    aggregation.rankedUrls, keywords, searches,
+    aggregation.totalUniqueUrls,
     aggregation.frequencyThreshold, aggregation.thresholdNote,
-  ) + '\n---\n\n';
-}
-
-function formatSearchResultEntry(
-  result: { title: string; link: string; snippet?: string; date?: string },
-  position: number,
-  urlLookup: ReturnType<typeof buildUrlLookup>,
-): string {
-  const positionScore = getPositionScore(position);
-  const rankedUrl = lookupUrl(result.link, urlLookup);
-  const frequency = rankedUrl?.frequency ?? 1;
-  const consensusMark = markConsensus(frequency);
-  const consensusInfo = rankedUrl
-    ? `${consensusMark} (${frequency} searches)`
-    : `${consensusMark} (1 search)`;
-
-  let entry = `${position}. **[${result.title}](${result.link})** — Position ${position} | Score: ${positionScore.toFixed(1)} | Consensus: ${consensusInfo}\n`;
-
-  if (result.snippet) {
-    entry += result.date
-      ? `   - *${result.date}* — ${result.snippet}\n`
-      : `   - ${result.snippet}\n`;
-  }
-
-  entry += '\n';
-  return entry;
-}
-
-function buildPerQuerySection(
-  response: SearchResponse,
-  urlLookup: ReturnType<typeof buildUrlLookup>,
-): { markdown: string; totalResults: number } {
-  let markdown = `## 📊 Full Search Results by Query\n\n`;
-
-  let totalResults = 0;
-
-  response.searches.forEach((search, index) => {
-    markdown += `### Query ${index + 1}: "${search.keyword}"\n\n`;
-
-    search.results.forEach((result, resultIndex) => {
-      markdown += formatSearchResultEntry(result, resultIndex + 1, urlLookup);
-      totalResults++;
-    });
-
-    if (search.related && search.related.length > 0) {
-      const relatedSuggestions = search.related
-        .map((r: string) => `\`${r}\``)
-        .join(', ');
-      markdown += `*Related:* ${relatedSuggestions}\n\n`;
-    }
-
-    if (index < response.searches.length - 1) markdown += `---\n\n`;
-  });
-
-  return { markdown, totalResults };
+  );
 }
 
 function formatSearchOutput(
-  consensusSection: string,
-  perQuerySection: string,
-  totalResults: number,
+  outputMarkdown: string,
   aggregation: SearchAggregation,
   consensusUrlCount: number,
   executionTime: number,
   totalKeywords: number,
+  searches: SearchResponse['searches'],
 ): ToolExecutionResult<WebSearchOutput> {
-  let markdown = consensusSection + perQuerySection;
+  const markdown = outputMarkdown + `\n---\n*${formatDuration(executionTime)} | ${aggregation.totalUniqueUrls} unique URLs | ${consensusUrlCount} consensus | threshold ≥${aggregation.frequencyThreshold}*`;
 
-  markdown += `\n---\n*${formatDuration(executionTime)} | ${aggregation.totalUniqueUrls} unique URLs | ${consensusUrlCount} consensus*`;
+  const coverageSummary = searches.map(s => {
+    let topDomain: string | undefined;
+    const topResult = s.results[0];
+    if (topResult) {
+      try { topDomain = new URL(topResult.link).hostname.replace(/^www\./, ''); } catch { /* ignore */ }
+    }
+    return { keyword: s.keyword, result_count: s.results.length, top_url: topDomain };
+  });
+  const lowYieldKeywords = searches
+    .filter(s => s.results.length <= 1)
+    .map(s => s.keyword);
 
   const metadata = {
     total_keywords: totalKeywords,
-    total_results: totalResults,
+    total_results: aggregation.rankedUrls.length,
     execution_time_ms: executionTime,
     total_unique_urls: aggregation.totalUniqueUrls,
     consensus_url_count: consensusUrlCount,
     frequency_threshold: aggregation.frequencyThreshold,
+    coverage_summary: coverageSummary,
+    ...(lowYieldKeywords.length > 0 ? { low_yield_keywords: lowYieldKeywords } : {}),
   };
 
   return toolSuccess(markdown, { content: markdown, metadata });
@@ -209,26 +152,24 @@ export async function handleWebSearch(
     const response = await executeSearches(params.keywords);
     await reporter.progress(50, 100, 'Collected search results');
 
-    const { aggregation, urlLookup, consensusUrls } = processAndRankResults(response);
+    const { aggregation, consensusUrls } = processResults(response);
     await reporter.log(
       'info',
       `Collected ${aggregation.totalUniqueUrls} unique URLs across ${response.totalKeywords} queries`,
     );
 
-    const consensusSection = buildConsensusSection(params.keywords, aggregation);
-    const { markdown: perQuerySection, totalResults } = buildPerQuerySection(response, urlLookup);
+    const outputMarkdown = buildOutputMarkdown(params.keywords, aggregation, response.searches);
     await reporter.progress(80, 100, 'Ranking and formatting search results');
 
     const executionTime = Date.now() - startTime;
-    mcpLog('info', `Search completed: ${totalResults} results, ${aggregation.totalUniqueUrls} unique URLs, ${consensusUrls.length} consensus`, 'search');
+    mcpLog('info', `Search completed: ${aggregation.rankedUrls.length} unique URLs, ${consensusUrls.length} consensus`, 'search');
     await reporter.log(
       'info',
-      `Search completed with ${totalResults} ranked results and ${consensusUrls.length} consensus URL(s)`,
+      `Search completed with ${aggregation.rankedUrls.length} ranked URLs and ${consensusUrls.length} consensus`,
     );
 
     return formatSearchOutput(
-      consensusSection, perQuerySection, totalResults,
-      aggregation, consensusUrls.length, executionTime, response.totalKeywords,
+      outputMarkdown, aggregation, consensusUrls.length, executionTime, response.totalKeywords, response.searches,
     );
   } catch (error) {
     return buildWebSearchError(error, params, startTime);
