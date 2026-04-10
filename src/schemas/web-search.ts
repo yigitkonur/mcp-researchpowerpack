@@ -28,6 +28,9 @@ export const webSearchParamsSchema = z.object(webSearchParamsShape).strict();
 export type WebSearchParams = z.infer<typeof webSearchParamsSchema>;
 
 export const webSearchOutputSchema = z.object({
+  content: z
+    .string()
+    .describe('Formatted markdown report containing ranked URLs with consensus markers and per-query results.'),
   metadata: z.object({
     total_keywords: z
       .number()

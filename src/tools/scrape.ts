@@ -277,7 +277,7 @@ function buildScrapeResponse(
   });
 
   const metadata = buildScrapeMetadata(params, metrics, tokensPerUrl, totalBatches, executionTime);
-  return { content: formattedContent, structuredContent: { metadata } };
+  return { content: formattedContent, structuredContent: { content: formattedContent, metadata } };
 }
 
 /**

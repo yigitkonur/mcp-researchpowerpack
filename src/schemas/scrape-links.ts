@@ -40,6 +40,9 @@ export const scrapeLinksParamsSchema = z.object(scrapeLinksParamsShape).strict()
 export type ScrapeLinksParams = z.infer<typeof scrapeLinksParamsSchema>;
 
 export const scrapeLinksOutputSchema = z.object({
+  content: z
+    .string()
+    .describe('Formatted markdown report containing scraped content, failures, and follow-up steps.'),
   metadata: z.object({
     total_urls: z
       .number()

@@ -62,6 +62,9 @@ export type GetRedditPostParams = z.infer<typeof getRedditPostParamsSchema>;
 // ============================================================================
 
 export const searchRedditOutputSchema = z.object({
+  content: z
+    .string()
+    .describe('Formatted markdown report containing ranked Reddit URLs and search guidance.'),
   metadata: z.object({
     query_count: z
       .number()
@@ -87,6 +90,9 @@ export type SearchRedditOutput = z.infer<typeof searchRedditOutputSchema>;
 // ============================================================================
 
 export const getRedditPostOutputSchema = z.object({
+  content: z
+    .string()
+    .describe('Formatted markdown report containing Reddit posts, comments, and next steps.'),
   metadata: z.object({
     total_urls: z
       .number()

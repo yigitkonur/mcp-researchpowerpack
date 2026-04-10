@@ -165,7 +165,7 @@ function formatSearchOutput(
     frequency_threshold: aggregation.frequencyThreshold,
   };
 
-  return toolSuccess(markdown, { metadata });
+  return toolSuccess(markdown, { content: markdown, metadata });
 }
 
 function buildWebSearchError(
