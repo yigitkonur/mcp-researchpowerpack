@@ -221,9 +221,8 @@ export const SCRAPER = {
 
 export const REDDIT = {
   BATCH_SIZE: 10,
-  MAX_WORDS_PER_POST: 20_000,
-  MAX_WORDS_TOTAL: 100_000,
-  FETCH_LIMIT_PER_POST: 500,
+  MAX_WORDS_PER_POST: 50_000,
+  MAX_WORDS_TOTAL: 500_000,
   MIN_POSTS: 1,
   MAX_POSTS: 50,
   RETRY_COUNT: 5,
@@ -287,7 +286,7 @@ let cachedLlmExtraction: LlmExtractionConfig | null = null;
 function getLlmExtraction(): LlmExtractionConfig {
   if (cachedLlmExtraction) return cachedLlmExtraction;
   cachedLlmExtraction = {
-    MODEL: process.env.LLM_EXTRACTION_MODEL || 'openai/gpt-oss-120b:nitro',
+    MODEL: process.env.LLM_EXTRACTION_MODEL || 'gpt-5.4-mini',
     BASE_URL: process.env.LLM_EXTRACTION_BASE_URL || process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
     API_KEY: process.env.LLM_EXTRACTION_API_KEY || process.env.OPENROUTER_API_KEY || '',
     MAX_TOKENS: 8000,

@@ -11,38 +11,31 @@ const urlSchema = z
   .describe('A fully-qualified HTTP or HTTPS URL to fetch and extract content from.');
 
 // Input schema for scrape-links tool
-const scrapeLinksParamsShape = {
+export const scrapeLinksParamsSchema = z.object({
   urls: z
-    .array(urlSchema, {
-      error: 'scrape-links: URLs must be an array',
-    })
+    .array(urlSchema, { error: 'scrape-links: URLs must be an array' })
     .min(1, { message: 'scrape-links: At least 1 URL is required' })
     .max(50, { message: 'scrape-links: Maximum 50 URLs allowed per request' })
-    .describe('URLs to scrape (1-50). Recommend 3-5 URLs for balanced depth/breadth. More URLs = broader coverage but fewer tokens per URL. 3 URLs: ~10K tokens each (deep); 10 URLs: ~3K tokens each (balanced); 50 URLs: ~640 tokens each (scan).'),
+    .describe('URLs to scrape (1-50). Token budget (32K) is split across URLs: 3 URLs get ~10K tokens each (deep), 10 get ~3K (balanced), 50 get ~640 (scan). Each page is scraped, cleaned, and processed by the LLM per what_to_extract.'),
   timeout: z
     .number({ error: 'scrape-links: Timeout must be a number' })
     .min(5, { message: 'scrape-links: Timeout must be at least 5 seconds' })
     .max(120, { message: 'scrape-links: Timeout cannot exceed 120 seconds' })
     .default(30)
-    .describe('Timeout in seconds for each URL'),
-  use_llm: z
-    .boolean({ error: 'scrape-links: use_llm must be a boolean' })
-    .default(true)
-    .describe('AI extraction enabled by default (requires OPENROUTER_API_KEY). Auto-filters nav/ads/footers, extracts ONLY what you specify. Set false only for raw HTML debugging.'),
+    .describe('Timeout in seconds for each URL.'),
   what_to_extract: z
-    .string()
+    .string({ error: 'scrape-links: what_to_extract is required' })
+    .min(5, { message: 'scrape-links: what_to_extract must be at least 5 characters' })
     .max(1000, { message: 'scrape-links: Extraction instructions too long (max 1000 characters)' })
-    .optional()
-    .describe('Extraction instructions for AI. Will be wrapped with compression prefix+suffix automatically. Formula: "Extract [target1] | [target2] | [target3] with focus on [aspect1], [aspect2]". Min 3 targets with | separator. Be specific (pricing tiers not pricing). Aim 5-10 targets.'),
-};
+    .describe('REQUIRED. Extraction instructions for the LLM. The LLM processes each scraped page and extracts ONLY what you specify. Formula: "Extract [target1] | [target2] | [target3] with focus on [aspect]". Be specific: "pricing tiers | monthly vs annual cost | free tier limits" not just "pricing".'),
+}).strict();
 
-export const scrapeLinksParamsSchema = z.object(scrapeLinksParamsShape).strict();
 export type ScrapeLinksParams = z.infer<typeof scrapeLinksParamsSchema>;
 
 export const scrapeLinksOutputSchema = z.object({
   content: z
     .string()
-    .describe('Formatted markdown report containing scraped content, failures, and follow-up steps.'),
+    .describe('LLM-extracted content from scraped pages, structured per what_to_extract instructions.'),
   metadata: z.object({
     total_urls: z
       .number()
@@ -87,7 +80,7 @@ export const scrapeLinksOutputSchema = z.object({
       .nonnegative()
       .optional()
       .describe('Number of scrape batches executed.'),
-  }).strict().describe('Structured metadata about the scrape batch.'),
+  }).strict().describe('Structured metadata about the scrape and extraction batch.'),
 }).strict();
 
 export type ScrapeLinksOutput = z.infer<typeof scrapeLinksOutputSchema>;

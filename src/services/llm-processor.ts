@@ -283,3 +283,134 @@ export async function processContentWithLLM(
   };
 }
 
+// ============================================================================
+// Web-Search Result Classification
+// ============================================================================
+
+/** Maximum URLs to send to the LLM for classification */
+const MAX_CLASSIFICATION_URLS = 50 as const;
+
+/** Classification tiers */
+type ClassificationTier = 'HIGHLY_RELEVANT' | 'MAYBE_RELEVANT' | 'OTHER';
+
+export interface ClassificationEntry {
+  readonly rank: number;
+  readonly tier: ClassificationTier;
+}
+
+export interface ClassificationResult {
+  readonly title: string;
+  readonly synthesis: string;
+  readonly results: ClassificationEntry[];
+}
+
+/**
+ * Classify web-search results by relevance to an objective using the LLM.
+ * Sends only titles, snippets, and domain names — does NOT fetch URLs.
+ * Returns null on failure (caller should fall back to raw output).
+ */
+export async function classifySearchResults(
+  rankedUrls: ReadonlyArray<{
+    readonly rank: number;
+    readonly url: string;
+    readonly title: string;
+    readonly snippet: string;
+    readonly frequency: number;
+    readonly queries: string[];
+  }>,
+  objective: string,
+  totalKeywords: number,
+  processor: OpenAI,
+): Promise<{ result: ClassificationResult | null; error?: string }> {
+  const urlsToClassify = rankedUrls.slice(0, MAX_CLASSIFICATION_URLS);
+
+  // Build compressed result list — title + domain + snippet (truncated)
+  const lines: string[] = [];
+  for (const url of urlsToClassify) {
+    let domain: string;
+    try {
+      domain = new URL(url.url).hostname.replace(/^www\./, '');
+    } catch {
+      domain = url.url;
+    }
+    const snippet = url.snippet.length > 120
+      ? url.snippet.slice(0, 117) + '...'
+      : url.snippet;
+    lines.push(`[${url.rank}] ${url.title} — ${domain} — ${snippet}`);
+  }
+
+  const prompt = `You are classifying search results. The user is looking for: ${objective}
+
+Classify each result and generate a summary.
+
+Return JSON (no markdown, no code fences):
+{
+  "title": "2-8 word topic label for these results",
+  "synthesis": "2-3 sentence overview of what the relevant results reveal about this topic",
+  "results": [
+    {"rank": 1, "tier": "HIGHLY_RELEVANT"},
+    {"rank": 2, "tier": "MAYBE_RELEVANT"},
+    ...
+  ]
+}
+
+Tiers:
+- HIGHLY_RELEVANT: Directly addresses the objective. Worth clicking/scraping.
+- MAYBE_RELEVANT: Tangentially related. Might have useful context.
+- OTHER: Not relevant to the specific objective.
+
+Rules:
+- Classify ALL ${urlsToClassify.length} results. Do not skip any.
+- Only use the three tier values above.
+- Judge by title, site name, and snippet only. Do NOT fetch any URLs.
+- If unsure, classify as MAYBE_RELEVANT.
+
+SEARCH RESULTS (${urlsToClassify.length} URLs from ${totalKeywords} queries):
+${lines.join('\n')}`;
+
+  try {
+    mcpLog('info', `Classifying ${urlsToClassify.length} URLs against objective`, 'llm');
+
+    const requestBody: Record<string, unknown> = {
+      model: LLM_EXTRACTION.MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 4000,
+    };
+
+    if (LLM_EXTRACTION.REASONING_EFFORT !== 'none') {
+      requestBody.reasoning_effort = LLM_EXTRACTION.REASONING_EFFORT;
+    }
+
+    const response = await withStallProtection(
+      (stallSignal) => processor.chat.completions.create(
+        requestBody as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
+        { signal: stallSignal, timeout: LLM_REQUEST_DEADLINE_MS },
+      ),
+      LLM_STALL_TIMEOUT_MS,
+      3,
+      'Search classification',
+    );
+
+    const raw = response.choices?.[0]?.message?.content;
+    if (!raw?.trim()) {
+      return { result: null, error: 'LLM returned empty classification response' };
+    }
+
+    // Strip markdown code fences if present
+    const cleaned = raw.replace(/^```(?:json)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
+    const parsed = JSON.parse(cleaned) as ClassificationResult;
+
+    // Validate the response shape
+    if (!parsed.title || !parsed.synthesis || !Array.isArray(parsed.results)) {
+      return { result: null, error: 'LLM response missing required fields (title, synthesis, results)' };
+    }
+
+    mcpLog('info', `Classification complete: ${parsed.results.filter(r => r.tier === 'HIGHLY_RELEVANT').length} highly relevant`, 'llm');
+    return { result: parsed };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    mcpLog('error', `Classification failed: ${message}`, 'llm');
+    return { result: null, error: `Classification failed: ${message}` };
+  }
+}
+
