@@ -65,6 +65,18 @@ export const webSearchOutputSchema = z.object({
       .nonnegative()
       .optional()
       .describe('Minimum frequency required for a URL to be considered consensus.'),
+    coverage_summary: z
+      .array(z.object({
+        keyword: z.string().describe('The search keyword.'),
+        result_count: z.number().int().nonnegative().describe('Number of results returned for this keyword.'),
+        top_url: z.string().optional().describe('Domain of the top-ranked result for this keyword.'),
+      }))
+      .optional()
+      .describe('Per-keyword result counts and top URLs for coverage analysis.'),
+    low_yield_keywords: z
+      .array(z.string())
+      .optional()
+      .describe('Keywords that produced 0-1 results.'),
   }).strict().describe('Structured metadata about the completed web search batch.'),
 }).strict();
 
