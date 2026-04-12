@@ -88,3 +88,21 @@ make dev       # start MCP dev server on mini
 make deploy    # deploy from mini
 make info      # show detected config
 ```
+
+## Cloud deployment
+
+The server runs live at **`https://research.yigitkonur.com/mcp`** (Streamable HTTP transport, MCP protocol version `2025-11-25`).
+
+Every push to `main` triggers an automatic redeploy — no manual deploy step needed after merging.
+
+### Smoke-testing the live server with mcpc
+
+```bash
+mcpc connect https://research.yigitkonur.com/mcp @research
+mcpc @research ping                   # latency check
+mcpc @research tools-list --full      # verify all 4 tools are present
+mcpc @research resources-read health://status   # uptime + active sessions
+mcpc close @research
+```
+
+Expected: 4 tools (`web-search`, `search-reddit`, `get-reddit-post`, `scrape-links`), 1 resource (`health://status`), no prompts. Server name `mcp-researchpowerpack-http`, current version reported in `health://status`.

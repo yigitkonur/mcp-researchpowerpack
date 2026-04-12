@@ -229,6 +229,21 @@ async function main(): Promise<void> {
 
   server.get('/health', (c) => c.json(buildHealthPayload(server, startedAt)));
   server.get('/healthz', (c) => c.json(buildHealthPayload(server, startedAt)));
+
+  // Some MCP clients (Claude Desktop, Cursor, VS Code) proactively probe
+  // /.well-known/oauth-protected-resource before receiving any 401, per the
+  // MCP 2025-03-26 spec. Without these routes the server returns 404 and some
+  // clients surface a spurious "authentication required" error. A minimal PRM
+  // response with no authorization_servers field explicitly signals that this
+  // server requires no authentication.
+  const resourceBaseUrl = baseUrl ?? `http://${host}:${port}`;
+  server.get('/.well-known/oauth-protected-resource', (c) =>
+    c.json({ resource: resourceBaseUrl }),
+  );
+  server.get('/.well-known/oauth-protected-resource/mcp', (c) =>
+    c.json({ resource: `${resourceBaseUrl}/mcp` }),
+  );
+
   server.resource(
     {
       name: 'server-health',
