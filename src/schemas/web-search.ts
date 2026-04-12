@@ -37,13 +37,13 @@ export const webSearchOutputSchema = z.object({
     llm_error: z.string().optional().describe('LLM error if classification failed and fell back to raw.'),
     coverage_summary: z
       .array(z.object({
-        keyword: z.string().describe('The search query.'),
+        query: z.string().describe('The search query.'),
         result_count: z.number().int().nonnegative().describe('Results returned for this query.'),
         top_url: z.string().optional().describe('Domain of the top result.'),
       }))
       .optional()
       .describe('Per-query result counts and top URLs.'),
-    low_yield_keywords: z
+    low_yield_queries: z
       .array(z.string())
       .optional()
       .describe('Queries that produced 0-1 results.'),

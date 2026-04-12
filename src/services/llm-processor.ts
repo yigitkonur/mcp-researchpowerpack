@@ -31,8 +31,8 @@ const LLM_STALL_TIMEOUT_MS = 15_000 as const;
 const LLM_REQUEST_DEADLINE_MS = 30_000 as const;
 
 interface ProcessingConfig {
-  readonly use_llm: boolean;
-  readonly what_to_extract: string | undefined;
+  readonly enabled: boolean;
+  readonly extract: string | undefined;
   readonly max_tokens?: number;
 }
 
@@ -158,7 +158,7 @@ export async function processContentWithLLM(
   signal?: AbortSignal
 ): Promise<LLMResult> {
   // Early returns for invalid/skip conditions
-  if (!config.use_llm) {
+  if (!config.enabled) {
     return { content, processed: false };
   }
 
@@ -184,8 +184,8 @@ export async function processContentWithLLM(
     ? content.substring(0, MAX_LLM_INPUT_CHARS) + '\n\n[Content truncated due to length]'
     : content;
 
-  const prompt = config.what_to_extract
-    ? `Extract and clean the following content. Focus on: ${config.what_to_extract}\n\nContent:\n${truncatedContent}`
+  const prompt = config.extract
+    ? `Extract and clean the following content. Focus on: ${config.extract}\n\nContent:\n${truncatedContent}`
     : `Clean and extract the main content from the following text, removing navigation, ads, and irrelevant elements:\n\n${truncatedContent}`;
 
   const activeModel = LLM_EXTRACTION.MODEL;
@@ -319,7 +319,7 @@ export async function classifySearchResults(
     readonly queries: string[];
   }>,
   objective: string,
-  totalKeywords: number,
+  totalQueries: number,
   processor: OpenAI,
 ): Promise<{ result: ClassificationResult | null; error?: string }> {
   const urlsToClassify = rankedUrls.slice(0, MAX_CLASSIFICATION_URLS);
@@ -365,7 +365,7 @@ Rules:
 - Judge by title, site name, and snippet only. Do NOT fetch any URLs.
 - If unsure, classify as MAYBE_RELEVANT.
 
-SEARCH RESULTS (${urlsToClassify.length} URLs from ${totalKeywords} queries):
+SEARCH RESULTS (${urlsToClassify.length} URLs from ${totalQueries} queries):
 ${lines.join('\n')}`;
 
   try {

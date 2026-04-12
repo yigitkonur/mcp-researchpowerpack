@@ -294,7 +294,7 @@ function formatRedditOutput(
     for (const url of processResult.skippedUrls) {
       data += `- ${url}\n`;
     }
-    data += `\nCall get-reddit-post again with just these URLs.`;
+    data += `\nCall get-reddit-post(urls=[...skipped URLs above...]) with just the skipped URLs.`;
   }
 
   return formatSuccess({
@@ -302,8 +302,8 @@ function formatRedditOutput(
     summary: batchHeader + extraStatus,
     data,
     nextSteps: [
-      processResult.successful > 0 ? 'web-search to verify claims from Reddit discussions' : null,
-      processResult.successful > 0 ? 'scrape-links on URLs referenced in comments' : null,
+      processResult.successful > 0 ? 'web-search(queries=[...], extract="verify claims from Reddit") — cross-check Reddit findings' : null,
+      processResult.successful > 0 ? 'scrape-links(urls=[...URLs from comments...], extract="...") — scrape URLs referenced in comments' : null,
       processResult.failed > 0 ? 'Retry failed URLs individually' : null,
     ].filter(Boolean) as string[],
   });
@@ -318,8 +318,8 @@ function formatGetRedditPostsError(error: unknown): string {
     toolName: 'get-reddit-post',
     howToFix: ['Verify REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET are set'],
     alternatives: [
-      'web-search(keywords=["topic reddit discussion", "topic reddit recommendations"]) — search for Reddit content via web search instead',
-      'scrape-links(urls=[...the Reddit URLs...], use_llm=true, what_to_extract="Extract post content | top comments | recommendations") — scrape Reddit pages directly as a fallback',
+      'web-search(queries=["topic reddit discussion", "topic reddit recommendations"], extract="reddit discussions and recommendations") — search for Reddit content via web search instead',
+      'scrape-links(urls=[...the Reddit URLs...], extract="post content | top comments | recommendations") — scrape Reddit pages directly as a fallback',
     ],
   });
 }

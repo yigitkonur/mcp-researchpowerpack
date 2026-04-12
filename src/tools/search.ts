@@ -45,34 +45,32 @@ interface SearchAggregation {
 
 interface SearchResponse {
   searches: Parameters<typeof aggregateAndRank>[0];
-  totalKeywords: number;
+  totalQueries: number;
 }
 
 // --- Helpers ---
 
-async function executeSearches(keywords: string[]): Promise<SearchResponse> {
+async function executeSearches(queries: string[]): Promise<SearchResponse> {
   const client = new SearchClient();
-  return client.searchMultiple(keywords);
+  return client.searchMultiple(queries);
 }
 
 function processResults(response: SearchResponse): {
   aggregation: SearchAggregation;
-  consensusUrls: SearchAggregation['rankedUrls'];
 } {
   const aggregation = aggregateAndRank(response.searches, 5);
-  const consensusUrls = aggregation.rankedUrls.filter(u => u.isConsensus);
-  return { aggregation, consensusUrls };
+  return { aggregation };
 }
 
 // --- Raw output (traditional unified ranked list) ---
 
 function buildRawOutput(
-  keywords: string[],
+  queries: string[],
   aggregation: SearchAggregation,
   searches: SearchResponse['searches'],
 ): string {
   return generateUnifiedOutput(
-    aggregation.rankedUrls, keywords, searches,
+    aggregation.rankedUrls, queries, searches,
     aggregation.totalUniqueUrls,
     aggregation.frequencyThreshold, aggregation.thresholdNote,
   );
@@ -84,7 +82,7 @@ function buildClassifiedOutput(
   classification: ClassificationResult,
   aggregation: SearchAggregation,
   extract: string,
-  totalKeywords: number,
+  totalQueries: number,
 ): string {
   const rankedUrls = aggregation.rankedUrls;
 
@@ -117,7 +115,7 @@ function buildClassifiedOutput(
   // Header with generated title and synthesis
   lines.push(`## ${classification.title}`);
   lines.push(`> Looking for: ${extract}`);
-  lines.push(`> ${totalKeywords} queries → ${rankedUrls.length} URLs → ${tiers.high.length} highly relevant, ${tiers.maybe.length} possibly relevant`);
+  lines.push(`> ${totalQueries} queries → ${rankedUrls.length} URLs → ${tiers.high.length} highly relevant, ${tiers.maybe.length} possibly relevant`);
   lines.push('');
   lines.push(`**Summary:** ${classification.synthesis}`);
   lines.push('');
@@ -130,7 +128,7 @@ function buildClassifiedOutput(
     for (const url of tiers.high) {
       const coveragePct = Math.round(url.coverageRatio * 100);
       const queries = url.queries.map(q => `"${q}"`).join(', ');
-      lines.push(`| ${url.rank} | [${url.title}](${url.url}) | ${url.frequency}/${totalKeywords} (${coveragePct}%) |`);
+      lines.push(`| ${url.rank} | [${url.title}](${url.url}) | ${url.frequency}/${totalQueries} (${coveragePct}%) |`);
     }
     lines.push('');
   }
@@ -142,25 +140,25 @@ function buildClassifiedOutput(
     lines.push('|---|-----|---------|');
     for (const url of tiers.maybe) {
       const coveragePct = Math.round(url.coverageRatio * 100);
-      lines.push(`| ${url.rank} | [${url.title}](${url.url}) | ${url.frequency}/${totalKeywords} (${coveragePct}%) |`);
+      lines.push(`| ${url.rank} | [${url.title}](${url.url}) | ${url.frequency}/${totalQueries} (${coveragePct}%) |`);
     }
     lines.push('');
   }
 
-  // Other tier — with keyword attribution
+  // Other tier — with query attribution
   if (tiers.other.length > 0) {
     lines.push(`### Other Results (${tiers.other.length})`);
-    lines.push('| # | URL | Score | Keywords |');
+    lines.push('| # | URL | Score | Queries |');
     lines.push('|---|-----|-------|----------|');
     for (const url of tiers.other) {
-      const keywords = url.queries.map(q => `"${q}"`).join(', ');
+      const queryList = url.queries.map(q => `"${q}"`).join(', ');
       let domain: string;
       try {
         domain = new URL(url.url).hostname.replace(/^www\./, '');
       } catch {
         domain = url.url;
       }
-      lines.push(`| ${url.rank} | ${domain} | ${url.score.toFixed(1)} | ${keywords} |`);
+      lines.push(`| ${url.rank} | ${domain} | ${url.score.toFixed(1)} | ${queryList} |`);
     }
     lines.push('');
   }
@@ -173,7 +171,7 @@ function buildClassifiedOutput(
 function buildMetadata(
   aggregation: SearchAggregation,
   executionTime: number,
-  totalKeywords: number,
+  totalQueries: number,
   searches: SearchResponse['searches'],
   llmClassified: boolean,
   llmError?: string,
@@ -184,21 +182,21 @@ function buildMetadata(
     if (topResult) {
       try { topDomain = new URL(topResult.link).hostname.replace(/^www\./, ''); } catch { /* ignore */ }
     }
-    return { keyword: s.keyword, result_count: s.results.length, top_url: topDomain };
+    return { query: s.query, result_count: s.results.length, top_url: topDomain };
   });
-  const lowYieldKeywords = searches
+  const lowYieldQueries = searches
     .filter(s => s.results.length <= 1)
-    .map(s => s.keyword);
+    .map(s => s.query);
 
   return {
-    total_items: totalKeywords,
+    total_items: totalQueries,
     successful: aggregation.rankedUrls.length,
-    failed: totalKeywords - searches.filter(s => s.results.length > 0).length,
+    failed: totalQueries - searches.filter(s => s.results.length > 0).length,
     execution_time_ms: executionTime,
     llm_classified: llmClassified,
     ...(llmError ? { llm_error: llmError } : {}),
     coverage_summary: coverageSummary,
-    ...(lowYieldKeywords.length > 0 ? { low_yield_keywords: lowYieldKeywords } : {}),
+    ...(lowYieldQueries.length > 0 ? { low_yield_queries: lowYieldQueries } : {}),
   };
 }
 
@@ -222,7 +220,7 @@ function buildWebSearchError(
     howToFix: ['Verify SERPER_API_KEY is set correctly'],
     alternatives: [
       'search-reddit(queries=["topic recommendations"]) — returns Reddit URLs via Google search',
-      'scrape-links(urls=[...], what_to_extract="...") — if you have URLs from prior steps, scrape them now',
+      'scrape-links(urls=[...], extract="...") — if you have URLs from prior steps, scrape them now',
     ],
   });
 
@@ -250,7 +248,7 @@ export async function handleWebSearch(
     const { aggregation } = processResults(response);
     await reporter.log(
       'info',
-      `Collected ${aggregation.totalUniqueUrls} unique URLs across ${response.totalKeywords} queries`,
+      `Collected ${aggregation.totalUniqueUrls} unique URLs across ${response.totalQueries} queries`,
     );
 
     // Decide: raw output or LLM classification
@@ -275,13 +273,13 @@ export async function handleWebSearch(
       const classification = await classifySearchResults(
         aggregation.rankedUrls,
         params.extract,
-        response.totalKeywords,
+        response.totalQueries,
         llmProcessor,
       );
 
       if (classification.result) {
         markdown = buildClassifiedOutput(
-          classification.result, aggregation, params.extract, response.totalKeywords,
+          classification.result, aggregation, params.extract, response.totalQueries,
         );
         llmClassified = true;
         await reporter.progress(85, 100, 'Formatted classified results');
@@ -296,7 +294,7 @@ export async function handleWebSearch(
 
     const executionTime = Date.now() - startTime;
     const metadata = buildMetadata(
-      aggregation, executionTime, response.totalKeywords, response.searches, llmClassified, llmError,
+      aggregation, executionTime, response.totalQueries, response.searches, llmClassified, llmError,
     );
 
     mcpLog('info', `Search completed: ${aggregation.rankedUrls.length} URLs, classified=${llmClassified}`, 'search');

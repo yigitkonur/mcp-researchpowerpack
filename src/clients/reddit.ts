@@ -430,18 +430,6 @@ export class RedditClient {
     throw new Error(lastError?.message || 'Failed to fetch Reddit post after retries');
   }
 
-  async getPosts(urls: string[]): Promise<Map<string, PostResult | Error>> {
-    if (urls.length <= REDDIT.BATCH_SIZE) {
-      const results = await pMap(
-        urls,
-        u => this.getPost(u).catch(e => e as Error),
-        CONCURRENCY.REDDIT,
-      );
-      return new Map(urls.map((u, i) => [u, results[i]!]));
-    }
-    return (await this.batchGetPosts(urls)).results;
-  }
-
   async batchGetPosts(
     urls: string[],
     fetchComments = true,

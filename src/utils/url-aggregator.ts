@@ -5,13 +5,11 @@
  */
 
 import { CTR_WEIGHTS } from '../config/index.js';
-import type { KeywordSearchResult, RedditSearchResult } from '../clients/search.js';
+import type { QuerySearchResult } from '../clients/search.js';
 
 /** Minimum frequency for web search consensus marking */
 const WEB_CONSENSUS_THRESHOLD = 3 as const;
 
-/** Minimum frequency for Reddit consensus marking (lower due to fewer overlapping results) */
-const REDDIT_CONSENSUS_THRESHOLD = 2 as const;
 
 /** Minimum weight assigned to positions beyond top 10 */
 const MIN_BEYOND_TOP10_WEIGHT = 0 as const;
@@ -24,9 +22,6 @@ const BEYOND_TOP10_BASE = 10 as const;
 
 /** Default minimum consensus URLs before lowering threshold (web search) */
 const DEFAULT_MIN_CONSENSUS_URLS = 5 as const;
-
-/** Default minimum consensus URLs before lowering threshold (Reddit) */
-const DEFAULT_REDDIT_MIN_CONSENSUS_URLS = 3 as const;
 
 /** High consensus frequency threshold for enhanced output labeling */
 const HIGH_CONSENSUS_THRESHOLD = 4 as const;
@@ -116,7 +111,7 @@ function getCtrWeight(position: number): number {
  * Aggregate results from multiple searches
  * Flattens all results, deduplicates by URL, and tracks frequency/positions
  */
-function aggregateResults(searches: KeywordSearchResult[]): Map<string, AggregatedUrl> {
+function aggregateResults(searches: QuerySearchResult[]): Map<string, AggregatedUrl> {
   const urlMap = new Map<string, AggregatedUrl>();
 
   for (const search of searches) {
@@ -127,7 +122,7 @@ function aggregateResults(searches: KeywordSearchResult[]): Map<string, Aggregat
       if (existing) {
         existing.frequency += 1;
         existing.positions.push(result.position);
-        existing.queries.push(search.keyword);
+        existing.queries.push(search.query);
         const prevBest = existing.bestPosition;
         existing.bestPosition = Math.min(existing.bestPosition, result.position);
         existing.totalScore += getCtrWeight(result.position);
@@ -152,7 +147,7 @@ function aggregateResults(searches: KeywordSearchResult[]): Map<string, Aggregat
           allSnippets: result.snippet ? [result.snippet] : [],
           frequency: 1,
           positions: [result.position],
-          queries: [search.keyword],
+          queries: [search.query],
           bestPosition: result.position,
           totalScore: getCtrWeight(result.position),
         });
@@ -231,15 +226,7 @@ function calculateWeightedScores(urls: AggregatedUrl[], consensusThreshold: numb
   }));
 }
 
-/**
- * Mark consensus status for a URL against a given threshold.
- * Returns "CONSENSUS" if frequency >= threshold, else empty string.
- */
-export function markConsensus(frequency: number, threshold: number = WEB_CONSENSUS_THRESHOLD): string {
-  return frequency >= threshold ? 'CONSENSUS' : '';
-}
-
-/** Maximum keywords to show in the coverage table before collapsing */
+/** Maximum queries to show in the coverage table before collapsing */
 const COVERAGE_TABLE_MAX_ROWS = 20 as const;
 
 /**
@@ -258,8 +245,8 @@ function consistencyLabel(stdDev: number, frequency: number): string {
  */
 export function generateUnifiedOutput(
   rankedUrls: RankedUrl[],
-  allKeywords: string[],
-  keywordResults: KeywordSearchResult[],
+  allQueries: string[],
+  queryResults: QuerySearchResult[],
   totalUniqueUrls: number,
   frequencyThreshold: number,
   thresholdNote?: string,
@@ -268,7 +255,7 @@ export function generateUnifiedOutput(
   const consensusCount = rankedUrls.filter(u => u.isConsensus).length;
 
   // Header
-  lines.push(`## Web Search Results (${allKeywords.length} queries, ${totalUniqueUrls} unique URLs)`);
+  lines.push(`## Web Search Results (${allQueries.length} queries, ${totalUniqueUrls} unique URLs)`);
   lines.push('');
   if (thresholdNote) {
     lines.push(`> ${thresholdNote}`);
@@ -286,7 +273,7 @@ export function generateUnifiedOutput(
     const consistency = consistencyLabel(url.positionStdDev, url.frequency);
 
     lines.push(`**${url.rank}. [${url.title}](${url.url})**${consensusTag}`);
-    lines.push(`Score: ${url.score.toFixed(1)} | Seen in: ${url.frequency}/${allKeywords.length} queries (${coveragePct}%) | Best pos: #${url.bestPosition} | Consistency: ${consistency}`);
+    lines.push(`Score: ${url.score.toFixed(1)} | Seen in: ${url.frequency}/${allQueries.length} queries (${coveragePct}%) | Best pos: #${url.bestPosition} | Consistency: ${consistency}`);
     lines.push(`Queries: ${url.queries.map(q => `"${q}"`).join(', ')}`);
     lines.push(`> ${url.snippet}`);
 
@@ -307,13 +294,13 @@ export function generateUnifiedOutput(
   // Keyword coverage section
   lines.push('---');
 
-  if (allKeywords.length <= COVERAGE_TABLE_MAX_ROWS) {
-    // Full table for ≤20 keywords
-    lines.push('### Keyword Coverage');
-    lines.push('| Keyword | Results | Top URL | Top Pos |');
+  if (allQueries.length <= COVERAGE_TABLE_MAX_ROWS) {
+    // Full table for ≤20 queries
+    lines.push('### Query Coverage');
+    lines.push('| Query | Results | Top URL | Top Pos |');
     lines.push('|---------|---------|---------|---------|');
 
-    for (const search of keywordResults) {
+    for (const search of queryResults) {
       const topResult = search.results[0];
       let topDomain = '';
       if (topResult) {
@@ -323,26 +310,26 @@ export function generateUnifiedOutput(
           topDomain = topResult.link;
         }
       }
-      lines.push(`| "${search.keyword}" | ${search.results.length} | ${topDomain || '—'} | ${topResult ? `#${topResult.position}` : '—'} |`);
+      lines.push(`| "${search.query}" | ${search.results.length} | ${topDomain || '—'} | ${topResult ? `#${topResult.position}` : '—'} |`);
     }
     lines.push('');
   } else {
-    // Collapsed summary for >20 keywords
-    const goodCount = keywordResults.filter(s => s.results.length >= 3).length;
-    lines.push(`### Keyword Coverage: ${goodCount}/${allKeywords.length} keywords returned 3+ results`);
+    // Collapsed summary for >20 queries
+    const goodCount = queryResults.filter(s => s.results.length >= 3).length;
+    lines.push(`### Query Coverage: ${goodCount}/${allQueries.length} queries returned 3+ results`);
     lines.push('');
   }
 
-  // Low-yield keywords
-  const lowYield = keywordResults.filter(s => s.results.length <= 1);
+  // Low-yield queries
+  const lowYield = queryResults.filter(s => s.results.length <= 1);
   if (lowYield.length > 0) {
-    lines.push(`**Low-yield keywords** (0-1 results): ${lowYield.map(s => `\`${s.keyword}\``).join(', ')}`);
+    lines.push(`**Low-yield queries** (0-1 results): ${lowYield.map(s => `\`${s.query}\``).join(', ')}`);
     lines.push('');
   }
 
   // Related searches (merged and deduplicated)
   const allRelated = new Set<string>();
-  for (const search of keywordResults) {
+  for (const search of queryResults) {
     if (search.related) {
       for (const r of search.related) {
         allRelated.add(r);
@@ -364,7 +351,7 @@ export function generateUnifiedOutput(
  * drops URLs below the threshold. Every collected URL appears in the output.
  */
 export function aggregateAndRank(
-  searches: KeywordSearchResult[],
+  searches: QuerySearchResult[],
   minConsensusUrls: number = DEFAULT_MIN_CONSENSUS_URLS
 ): AggregationResult {
   const urlMap = aggregateResults(searches);
@@ -400,312 +387,3 @@ export function aggregateAndRank(
   };
 }
 
-/**
- * Build URL lookup map for quick consensus checking during result formatting
- */
-export function buildUrlLookup(rankedUrls: RankedUrl[]): Map<string, RankedUrl> {
-  const lookup = new Map<string, RankedUrl>();
-  
-  for (const url of rankedUrls) {
-    const normalized = normalizeUrl(url.url);
-    lookup.set(normalized, url);
-    // Also store original URL
-    lookup.set(url.url.toLowerCase(), url);
-  }
-
-  return lookup;
-}
-
-/**
- * Look up a URL in the ranked results
- */
-export function lookupUrl(url: string, lookup: Map<string, RankedUrl>): RankedUrl | undefined {
-  const normalized = normalizeUrl(url);
-  return lookup.get(normalized) || lookup.get(url.toLowerCase());
-}
-
-// ============================================================================
-// Reddit-Specific Aggregation
-// ============================================================================
-
-/**
- * Aggregated Reddit URL data structure
- */
-interface AggregatedRedditUrl {
-  readonly url: string;
-  title: string;
-  snippet: string;
-  date?: string;
-  frequency: number;
-  readonly positions: number[];
-  readonly queries: string[];
-  bestPosition: number;
-  totalScore: number;
-}
-
-/**
- * Ranked Reddit URL with normalized score
- */
-interface RankedRedditUrl {
-  readonly url: string;
-  readonly title: string;
-  readonly snippet: string;
-  readonly date?: string;
-  readonly rank: number;
-  readonly score: number;
-  readonly frequency: number;
-  readonly positions: number[];
-  readonly queries: string[];
-  readonly bestPosition: number;
-  readonly isConsensus: boolean;
-}
-
-/**
- * Reddit aggregation result
- */
-interface RedditAggregationResult {
-  readonly rankedUrls: RankedRedditUrl[];
-  readonly totalUniqueUrls: number;
-  readonly totalQueries: number;
-  readonly frequencyThreshold: number;
-  readonly thresholdNote?: string;
-}
-
-/**
- * Aggregate Reddit search results from multiple queries
- */
-function aggregateRedditResults(
-  searches: Map<string, RedditSearchResult[]>
-): Map<string, AggregatedRedditUrl> {
-  const urlMap = new Map<string, AggregatedRedditUrl>();
-
-  for (const [query, results] of searches) {
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      if (!result) continue;
-      const position = i + 1;
-      const normalizedUrl = normalizeUrl(result.url);
-      const existing = urlMap.get(normalizedUrl);
-
-      if (existing) {
-        existing.frequency += 1;
-        existing.positions.push(position);
-        existing.queries.push(query);
-        const prevBest = existing.bestPosition;
-        existing.bestPosition = Math.min(existing.bestPosition, position);
-        existing.totalScore += getCtrWeight(position);
-        // Keep best title/snippet (from highest ranking position)
-        if (position < prevBest) {
-          existing.title = result.title;
-          existing.snippet = result.snippet;
-          existing.date = result.date;
-        }
-      } else {
-        urlMap.set(normalizedUrl, {
-          url: result.url,
-          title: result.title,
-          snippet: result.snippet,
-          date: result.date,
-          frequency: 1,
-          positions: [position],
-          queries: [query],
-          bestPosition: position,
-          totalScore: getCtrWeight(position),
-        });
-      }
-    }
-  }
-
-  return urlMap;
-}
-
-/**
- * Count Reddit URLs meeting a frequency threshold
- */
-function countRedditByFrequency(
-  urlMap: Map<string, AggregatedRedditUrl>,
-  minFrequency: number
-): number {
-  let count = 0;
-  for (const url of urlMap.values()) {
-    if (url.frequency >= minFrequency) count++;
-  }
-  return count;
-}
-
-/**
- * Calculate weighted scores for Reddit URLs
- * Returns ALL URLs sorted by score with consensus marking
- */
-function calculateRedditWeightedScores(urls: AggregatedRedditUrl[], consensusThreshold: number): RankedRedditUrl[] {
-  if (urls.length === 0) return [];
-
-  // Sort by total score descending
-  const sorted = [...urls].sort((a, b) => b.totalScore - a.totalScore);
-
-  // Find max score for normalization
-  const maxScore = sorted[0]!.totalScore;
-
-  // Map to ranked URLs with normalized scores
-  return sorted.map((url, index) => ({
-    url: url.url,
-    title: url.title,
-    snippet: url.snippet,
-    date: url.date,
-    rank: index + 1,
-    score: maxScore > 0 ? (url.totalScore / maxScore) * 100 : 0,
-    frequency: url.frequency,
-    positions: url.positions,
-    queries: url.queries,
-    bestPosition: url.bestPosition,
-    isConsensus: url.frequency >= consensusThreshold,
-  }));
-}
-
-/**
- * Full Reddit aggregation pipeline — returns ALL URLs ranked by CTR score.
- * Determines a consensus threshold for labeling, never drops URLs.
- */
-export function aggregateAndRankReddit(
-  searches: Map<string, RedditSearchResult[]>,
-  minConsensusUrls: number = DEFAULT_REDDIT_MIN_CONSENSUS_URLS
-): RedditAggregationResult {
-  const urlMap = aggregateRedditResults(searches);
-  const totalUniqueUrls = urlMap.size;
-  const totalQueries = searches.size;
-
-  // Determine consensus threshold for labeling (not filtering)
-  const thresholds = [2, 1];
-  let usedThreshold = 1;
-  let thresholdNote: string | undefined;
-
-  for (const threshold of thresholds) {
-    const count = countRedditByFrequency(urlMap, threshold);
-    if (count >= minConsensusUrls || threshold === 1) {
-      usedThreshold = threshold;
-      if (threshold < 2 && totalQueries > 1) {
-        thresholdNote = `Note: Consensus threshold set to ≥${threshold} due to result diversity across queries.`;
-      }
-      break;
-    }
-  }
-
-  // Rank ALL URLs, marking consensus based on determined threshold
-  const allUrls = [...urlMap.values()];
-  const rankedUrls = calculateRedditWeightedScores(allUrls, usedThreshold);
-
-  return {
-    rankedUrls,
-    totalUniqueUrls,
-    totalQueries,
-    frequencyThreshold: usedThreshold,
-    thresholdNote,
-  };
-}
-
-/**
- * Generate enhanced output for Reddit aggregated results
- * Now includes both aggregated view AND per-query raw results
- */
-export function generateRedditEnhancedOutput(
-  aggregation: RedditAggregationResult,
-  allQueries: string[],
-  rawResults?: Map<string, RedditSearchResult[]>
-): string {
-  const { rankedUrls, totalUniqueUrls, frequencyThreshold, thresholdNote } = aggregation;
-  const lines: string[] = [];
-
-  // Header
-  lines.push(`# 🔍 Reddit Search Results (Aggregated from ${allQueries.length} Queries)`);
-  lines.push('');
-  lines.push(`**Total Unique Posts:** ${totalUniqueUrls} | **Consensus Threshold:** ≥${frequencyThreshold} appearances`);
-  lines.push('');
-
-  if (thresholdNote) {
-    lines.push(`> ${thresholdNote}`);
-    lines.push('');
-  }
-
-  // Consensus section (URLs appearing in multiple queries)
-  const consensusUrls = rankedUrls.filter(u => u.frequency >= frequencyThreshold && u.frequency > 1);
-  if (consensusUrls.length > 0) {
-    lines.push('## ⭐ High-Consensus Posts (Multiple Queries)');
-    lines.push('');
-    lines.push('*These posts appeared across multiple search queries, indicating high relevance:*');
-    lines.push('');
-
-    for (const url of consensusUrls) {
-      const dateStr = url.date ? ` • 📅 ${url.date}` : '';
-      const queriesList = url.queries.map(q => `"${q}"`).join(', ');
-      lines.push(`### #${url.rank}: ${url.title}`);
-      lines.push(`**Score:** ${url.score.toFixed(1)} | **Found in:** ${url.frequency} queries (${queriesList})${dateStr}`);
-      lines.push(`${url.url}`);
-      lines.push(`> ${url.snippet}`);
-      lines.push('');
-    }
-
-    lines.push('---');
-    lines.push('');
-  }
-
-  // All results ranked by CTR score
-  lines.push('## 📊 All Results (CTR-Ranked)');
-  lines.push('');
-
-  for (const url of rankedUrls) {
-    const dateStr = url.date ? ` • 📅 ${url.date}` : '';
-    const consensusMarker = url.frequency > 1 ? ' ⭐' : '';
-    lines.push(`**${url.rank}. ${url.title}**${consensusMarker}${dateStr}`);
-    lines.push(`${url.url}`);
-    lines.push(`> ${url.snippet}`);
-    if (url.frequency > 1) {
-      lines.push(`_Found in ${url.frequency} queries: ${url.queries.map(q => `"${q}"`).join(', ')}_`);
-    }
-    lines.push('');
-  }
-
-  // Per-Query Raw Results Section (NEW)
-  if (rawResults && rawResults.size > 0) {
-    lines.push('---');
-    lines.push('');
-    lines.push('## 📋 Per-Query Raw Results');
-    lines.push('');
-    lines.push('*Complete results for each individual query before aggregation:*');
-    lines.push('');
-
-    for (const [query, results] of rawResults) {
-      lines.push(`### 🔎 Query: "${query}"`);
-      lines.push(`**Results:** ${results.length} posts`);
-      lines.push('');
-
-      if (results.length === 0) {
-        lines.push('_No results found for this query._');
-        lines.push('');
-        continue;
-      }
-
-      for (let i = 0; i < results.length; i++) {
-        const result = results[i];
-        if (!result) continue;
-        const position = i + 1;
-        const dateStr = result.date ? ` • 📅 ${result.date}` : '';
-        lines.push(`${position}. **${result.title}**${dateStr}`);
-        lines.push(`   ${result.url}`);
-        lines.push(`   > ${result.snippet}`);
-        lines.push('');
-      }
-    }
-  }
-
-  // Metadata
-  lines.push('---');
-  lines.push('');
-  lines.push('### 📈 Search Metadata');
-  lines.push('');
-  lines.push(`- **Queries:** ${allQueries.map(q => `"${q}"`).join(', ')}`);
-  lines.push(`- **Unique Posts Found:** ${totalUniqueUrls}`);
-  lines.push(`- **High-Consensus Posts:** ${consensusUrls.length}`);
-  lines.push('');
-
-  return lines.join('\n');
-}
