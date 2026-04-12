@@ -19,7 +19,7 @@ import { mcpLog } from '../utils/logger.js';
 // ── Constants ──
 
 const SERPER_API_URL = 'https://google.serper.dev/search' as const;
-const DEFAULT_RESULTS_PER_KEYWORD = 10 as const;
+const DEFAULT_RESULTS_PER_QUERY = 10 as const;
 const MAX_RETRIES = 3 as const;
 
 // ── Data Interfaces ──
@@ -32,8 +32,8 @@ interface SearchResult {
   readonly position: number;
 }
 
-export interface KeywordSearchResult {
-  readonly keyword: string;
+export interface QuerySearchResult {
+  readonly query: string;
   readonly results: SearchResult[];
   readonly totalResults: number;
   readonly related: string[];
@@ -41,8 +41,8 @@ export interface KeywordSearchResult {
 }
 
 interface MultipleSearchResponse {
-  readonly searches: KeywordSearchResult[];
-  readonly totalKeywords: number;
+  readonly searches: QuerySearchResult[];
+  readonly totalQueries: number;
   readonly executionTime: number;
   readonly error?: StructuredError;
 }
@@ -74,8 +74,8 @@ const REDDIT_SUFFIX_REGEX = / - Reddit$/;
 
 function parseSearchResponses(
   responses: Array<Record<string, unknown>>,
-  keywords: string[],
-): KeywordSearchResult[] {
+  queries: string[],
+): QuerySearchResult[] {
   return responses.map((resp, index) => {
     try {
       const organic = (resp.organic || []) as Array<Record<string, unknown>>;
@@ -95,9 +95,9 @@ function parseSearchResponses(
       const relatedSearches = (resp.relatedSearches || []) as Array<Record<string, unknown>>;
       const related = relatedSearches.map((r) => (r.query as string) || '');
 
-      return { keyword: keywords[index] || '', results, totalResults, related };
+      return { query: queries[index] || '', results, totalResults, related };
     } catch {
-      return { keyword: keywords[index] || '', results: [], totalResults: 0, related: [] };
+      return { query: queries[index] || '', results: [], totalResults: 0, related: [] };
     }
   });
 }
@@ -198,22 +198,22 @@ export class SearchClient {
   }
 
   /**
-   * Search multiple keywords in parallel
+   * Search multiple queries in parallel
    * NEVER throws - always returns a valid response
    */
-  async searchMultiple(keywords: string[]): Promise<MultipleSearchResponse> {
+  async searchMultiple(queries: string[]): Promise<MultipleSearchResponse> {
     const startTime = Date.now();
 
-    if (keywords.length === 0) {
+    if (queries.length === 0) {
       return {
         searches: [],
-        totalKeywords: 0,
+        totalQueries: 0,
         executionTime: 0,
-        error: { code: ErrorCode.INVALID_INPUT, message: 'No keywords provided', retryable: false },
+        error: { code: ErrorCode.INVALID_INPUT, message: 'No queries provided', retryable: false },
       };
     }
 
-    const searchQueries = keywords.map(keyword => ({ q: keyword }));
+    const searchQueries = queries.map(query => ({ q: query }));
     const { data, error } = await executeSearchWithRetry(
       this.apiKey,
       searchQueries,
@@ -223,16 +223,16 @@ export class SearchClient {
     if (error || data === undefined) {
       return {
         searches: [],
-        totalKeywords: keywords.length,
+        totalQueries: queries.length,
         executionTime: Date.now() - startTime,
         error,
       };
     }
 
     const responses = Array.isArray(data) ? data : [data];
-    const searches = parseSearchResponses(responses as Array<Record<string, unknown>>, keywords);
+    const searches = parseSearchResponses(responses as Array<Record<string, unknown>>, queries);
 
-    return { searches, totalKeywords: keywords.length, executionTime: Date.now() - startTime };
+    return { searches, totalQueries: queries.length, executionTime: Date.now() - startTime };
   }
 
   /**
@@ -255,7 +255,7 @@ export class SearchClient {
         const res = await fetchWithTimeout(SERPER_API_URL, {
           method: 'POST',
           headers: { 'X-API-KEY': this.apiKey, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ q, num: DEFAULT_RESULTS_PER_KEYWORD }),
+          body: JSON.stringify({ q, num: DEFAULT_RESULTS_PER_QUERY }),
           timeoutMs: SEARCH_RETRY_CONFIG.timeoutMs,
         });
 

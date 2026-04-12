@@ -192,7 +192,7 @@ async function processItemsWithLlm(
 
     const llmResult = await processContentWithLLM(
       item.content,
-      { use_llm: true, what_to_extract: enhancedInstruction, max_tokens: tokensPerUrl },
+      { enabled: true, extract: enhancedInstruction, max_tokens: tokensPerUrl },
       llmProcessor,
     );
 
@@ -266,8 +266,8 @@ function buildScrapeResponse(
     summary: batchHeader,
     data: contents.join('\n\n---\n\n'),
     nextSteps: [
-      metrics.successful > 0 ? 'web-search or search-reddit to cross-check claims from scraped content' : null,
-      metrics.failed > 0 ? 'Retry failed URLs with timeout=60' : null,
+      metrics.successful > 0 ? 'web-search(queries=[...], extract="verify scraped content") or search-reddit(queries=[...]) — cross-check claims' : null,
+      metrics.failed > 0 ? 'scrape-links(urls=[...failed URLs...], extract="...") — retry the failed URLs' : null,
     ].filter(Boolean) as string[],
     metadata: {
       'Execution time': formatDuration(executionTime),
@@ -298,7 +298,7 @@ export async function handleScrapeLinks(
 
   if (validUrls.length === 0) {
     return createScrapeErrorResponse('INVALID_URLS', `All ${params.urls.length} URLs are invalid`, startTime, params.urls.length, false, [
-      'web-search(keywords=["topic documentation", "topic guide"]) — search for valid URLs first, then scrape the results',
+      'web-search(queries=["topic documentation", "topic guide"], extract="relevant documentation and guides") — search for valid URLs first, then scrape the results',
       'search-reddit(queries=["topic recommendations"]) — find discussion URLs to scrape instead',
     ]);
   }
@@ -315,7 +315,7 @@ export async function handleScrapeLinks(
   } catch (error) {
     const err = classifyError(error);
     return createScrapeErrorResponse('CLIENT_INIT_FAILED', `Failed to initialize scraper: ${err.message}`, startTime, params.urls.length, false, [
-      'web-search(keywords=["topic key findings", "topic summary", "topic overview"]) — search for information instead of scraping',
+      'web-search(queries=["topic key findings", "topic summary", "topic overview"], extract="key findings and summary") — search for information instead of scraping',
       'search-reddit(queries=["topic discussion", "topic recommendations"]) — get community insights as an alternative',
     ]);
   }
