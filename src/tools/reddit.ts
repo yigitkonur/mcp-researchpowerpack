@@ -32,6 +32,7 @@ import {
   type ToolExecutionResult,
   type ToolReporter,
 } from './mcp-helpers.js';
+import { requireBootstrap } from '../utils/bootstrap-guard.js';
 
 // ============================================================================
 // Formatters
@@ -390,6 +391,11 @@ export function registerSearchRedditTool(server: MCPServer): void {
         return toToolResponse(toolFailure(getMissingEnvMessage('search')));
       }
 
+      const guard = await requireBootstrap(ctx);
+      if (guard) {
+        return guard;
+      }
+
       const env = parseEnv();
       const reporter = createToolReporter(ctx, 'search-reddit');
       const result = await handleSearchReddit(queries, env.SEARCH_API_KEY!, reporter);
@@ -419,6 +425,11 @@ export function registerGetRedditPostTool(server: MCPServer): void {
     async ({ urls }, ctx) => {
       if (!getCapabilities().reddit) {
         return toToolResponse(toolFailure(getMissingEnvMessage('reddit')));
+      }
+
+      const guard = await requireBootstrap(ctx);
+      if (guard) {
+        return guard;
       }
 
       const env = parseEnv();

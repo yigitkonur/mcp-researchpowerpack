@@ -18,6 +18,10 @@ import {
 import { createClient, type RedisClientType } from 'redis';
 
 import { SERVER } from './src/config/index.js';
+import {
+  closeWorkflowStateStore,
+  configureWorkflowStateStore,
+} from './src/services/workflow-state.js';
 import { registerAllTools } from './src/tools/registry.js';
 
 const DEFAULT_PORT = 3000 as const;
@@ -188,6 +192,7 @@ async function main(): Promise<void> {
   const allowedOrigins = resolveAllowedOrigins();
 
   const { sessionConfig, cleanupFns } = await buildSessionConfig();
+  await configureWorkflowStateStore(process.env.REDIS_URL?.trim());
 
   startupLogger.info(`Starting ${SERVER.NAME} v${SERVER.VERSION}`);
   startupLogger.info(`Binding HTTP server to ${host}:${port}`);
@@ -268,6 +273,7 @@ async function main(): Promise<void> {
     try {
       startupLogger.warn(`Shutdown signal received: ${signal}`);
       await server.close();
+      await closeWorkflowStateStore();
 
       for (const cleanupFn of cleanupFns) {
         await cleanupFn();

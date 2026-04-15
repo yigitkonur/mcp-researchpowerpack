@@ -302,6 +302,16 @@ export interface ClassificationResult {
   readonly title: string;
   readonly synthesis: string;
   readonly results: ClassificationEntry[];
+  readonly refine_queries?: Array<{
+    readonly query: string;
+    readonly rationale: string;
+  }>;
+  readonly confidence?: 'high' | 'medium' | 'low';
+}
+
+export interface RefineQuerySuggestion {
+  readonly query: string;
+  readonly rationale: string;
 }
 
 /**
@@ -347,6 +357,10 @@ Return JSON (no markdown, no code fences):
 {
   "title": "2-8 word topic label for these results",
   "synthesis": "2-3 sentence overview of what the relevant results reveal about this topic",
+  "confidence": "high | medium | low",
+  "refine_queries": [
+    { "query": "follow-up search to run next", "rationale": "why it helps" }
+  ],
   "results": [
     {"rank": 1, "tier": "HIGHLY_RELEVANT"},
     {"rank": 2, "tier": "MAYBE_RELEVANT"},
@@ -364,6 +378,8 @@ Rules:
 - Only use the three tier values above.
 - Judge by title, site name, and snippet only. Do NOT fetch any URLs.
 - If unsure, classify as MAYBE_RELEVANT.
+- Provide 3-6 diverse follow-up searches in refine_queries.
+- Keep follow-up searches concrete and non-duplicative.
 
 SEARCH RESULTS (${urlsToClassify.length} URLs from ${totalQueries} queries):
 ${lines.join('\n')}`;
@@ -414,3 +430,82 @@ ${lines.join('\n')}`;
   }
 }
 
+export async function suggestRefineQueriesForRawMode(
+  rankedUrls: ReadonlyArray<{
+    readonly rank: number;
+    readonly url: string;
+    readonly title: string;
+  }>,
+  objective: string,
+  originalQueries: readonly string[],
+  processor: OpenAI,
+): Promise<{ result: RefineQuerySuggestion[]; error?: string }> {
+  const urlsToSummarize = rankedUrls.slice(0, 12);
+  const lines = urlsToSummarize.map((url) => {
+    let domain: string;
+    try {
+      domain = new URL(url.url).hostname.replace(/^www\./, '');
+    } catch {
+      domain = url.url;
+    }
+    return `[${url.rank}] ${url.title} — ${domain}`;
+  });
+
+  const prompt = `You are generating follow-up search queries for an agent using raw web-search results.
+
+Return JSON (no markdown, no code fences):
+{
+  "refine_queries": [
+    { "query": "next search query", "rationale": "why it helps" }
+  ]
+}
+
+Objective: ${objective}
+Original queries:
+${originalQueries.map((query) => `- ${query}`).join('\n')}
+
+Top result titles:
+${lines.join('\n')}
+
+Rules:
+- Produce 3-6 diverse, non-duplicative follow-up queries.
+- Prefer queries that deepen, compare, or validate the topic.
+- Do not include URLs.
+- Keep rationales short.`;
+
+  try {
+    const requestBody: Record<string, unknown> = {
+      model: LLM_EXTRACTION.MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 800,
+    };
+
+    if (LLM_EXTRACTION.REASONING_EFFORT !== 'none') {
+      requestBody.reasoning_effort = LLM_EXTRACTION.REASONING_EFFORT;
+    }
+
+    const response = await withStallProtection(
+      (stallSignal) => processor.chat.completions.create(
+        requestBody as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
+        { signal: stallSignal, timeout: LLM_REQUEST_DEADLINE_MS },
+      ),
+      LLM_STALL_TIMEOUT_MS,
+      3,
+      'Raw-mode refine query generation',
+    );
+
+    const raw = response.choices?.[0]?.message?.content;
+    if (!raw?.trim()) {
+      return { result: [], error: 'LLM returned empty raw-mode refine query response' };
+    }
+
+    const cleaned = raw.replace(/^```(?:json)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
+    const parsed = JSON.parse(cleaned) as { refine_queries?: RefineQuerySuggestion[] };
+
+    return { result: Array.isArray(parsed.refine_queries) ? parsed.refine_queries : [] };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    mcpLog('error', `Raw-mode refine query generation failed: ${message}`, 'llm');
+    return { result: [], error: message };
+  }
+}

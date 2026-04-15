@@ -1,6 +1,6 @@
 {
   "name": "mcp-researchpowerpack-http",
-  "version": "4.1.4",
+  "version": "4.2.0",
   "description": "The ultimate research MCP toolkit: Reddit mining, web search with CTR aggregation, and intelligent web scraping - all in one modular package",
   "type": "module",
   "main": "dist/index.js",
@@ -19,8 +19,10 @@
     "deploy": "mcp-use deploy",
     "inspect": "npx @mcp-use/inspector --url http://localhost:3000/mcp",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm test:http",
+    "test": "pnpm test:unit && pnpm test:http",
+    "test:unit": "tsx --test tests/**/*.test.ts",
     "test:http": "tsx tests/http-server.ts",
+    "test:evals": "tsx tests/agent-behavior.ts",
     "prepublishOnly": "pnpm build && pnpm typecheck"
   },
   "keywords": [

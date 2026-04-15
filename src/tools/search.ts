@@ -17,7 +17,13 @@ import {
   aggregateAndRank,
   generateUnifiedOutput,
 } from '../utils/url-aggregator.js';
-import { createLLMProcessor, classifySearchResults, type ClassificationResult } from '../services/llm-processor.js';
+import {
+  createLLMProcessor,
+  classifySearchResults,
+  suggestRefineQueriesForRawMode,
+  type ClassificationResult,
+  type RefineQuerySuggestion,
+} from '../services/llm-processor.js';
 import { classifyError } from '../utils/errors.js';
 import {
   mcpLog,
@@ -33,6 +39,9 @@ import {
   type ToolExecutionResult,
   type ToolReporter,
 } from './mcp-helpers.js';
+import { requireBootstrap } from '../utils/bootstrap-guard.js';
+import { redditKeywordGuard } from '../utils/reddit-keyword-guard.js';
+import { sanitizeSuggestion } from '../utils/sanitize.js';
 
 // --- Internal types ---
 
@@ -76,12 +85,66 @@ function buildRawOutput(
   );
 }
 
+function buildSignalsSection(
+  aggregation: SearchAggregation,
+  searches: SearchResponse['searches'],
+  totalKeywords: number,
+): string {
+  const coverageCount = searches.filter((search) => search.results.length >= 3).length;
+  const lowYield = searches
+    .filter((search) => search.results.length <= 1)
+    .map((search) => `"${search.keyword}"`);
+  const consensusCount = aggregation.rankedUrls.filter((url) => url.isConsensus).length;
+
+  const lines = [
+    '**Signals**',
+    `- Coverage: ${coverageCount}/${totalKeywords} queries returned ≥3 results`,
+    `- Consensus URLs: ${consensusCount}`,
+  ];
+
+  if (lowYield.length > 0) {
+    lines.push(`- Low-yield: ${lowYield.join(', ')}`);
+  }
+
+  return lines.join('\n');
+}
+
+export function buildSuggestedFollowUpsSection(
+  refineQueries: Array<{ query: string; rationale: string }> | undefined,
+): string {
+  if (!refineQueries || refineQueries.length === 0) {
+    return '';
+  }
+
+  const lines = ['## Suggested follow-up searches', ''];
+
+  for (const item of refineQueries) {
+    lines.push(`- ${sanitizeSuggestion(item.query)} — ${sanitizeSuggestion(item.rationale)}`);
+  }
+
+  return lines.join('\n');
+}
+
+export function appendSignalsAndFollowUps(
+  markdown: string,
+  signalsSection: string,
+  refineQueries: RefineQuerySuggestion[] | undefined,
+): string {
+  const sections = [markdown, '', '---', signalsSection];
+  const followUps = buildSuggestedFollowUpsSection(refineQueries);
+  if (followUps) {
+    sections.push('', followUps);
+  }
+  return sections.join('\n');
+}
+
 // --- Classified output (3-tier LLM-classified table) ---
 
 function buildClassifiedOutput(
   classification: ClassificationResult,
   aggregation: SearchAggregation,
   extract: string,
+  searches: SearchResponse['searches'],
   totalQueries: number,
 ): string {
   const rankedUrls = aggregation.rankedUrls;
@@ -161,6 +224,14 @@ function buildClassifiedOutput(
       lines.push(`| ${url.rank} | ${domain} | ${url.score.toFixed(1)} | ${queryList} |`);
     }
     lines.push('');
+  }
+
+  lines.push(buildSignalsSection(aggregation, searches, totalQueries));
+
+  const followUps = buildSuggestedFollowUpsSection(classification.refine_queries);
+  if (followUps) {
+    lines.push('');
+    lines.push(followUps);
   }
 
   return lines.join('\n');
@@ -253,7 +324,7 @@ export async function handleWebSearch(
 
     // Decide: raw output or LLM classification
     const useRaw = params.raw;
-    const llmProcessor = useRaw ? null : createLLMProcessor();
+    const llmProcessor = createLLMProcessor();
 
     let markdown: string;
     let llmClassified = false;
@@ -265,7 +336,21 @@ export async function handleWebSearch(
         llmError = 'LLM unavailable (LLM_EXTRACTION_API_KEY not set). Falling back to raw output.';
         mcpLog('warning', llmError, 'search');
       }
-      markdown = buildRawOutput(params.queries, aggregation, response.searches);
+      let rawRefineQueries: RefineQuerySuggestion[] | undefined;
+      if (useRaw && llmProcessor) {
+        const refineResult = await suggestRefineQueriesForRawMode(
+          aggregation.rankedUrls,
+          params.extract,
+          params.queries,
+          llmProcessor,
+        );
+        rawRefineQueries = refineResult.result;
+      }
+      markdown = appendSignalsAndFollowUps(
+        buildRawOutput(params.queries, aggregation, response.searches),
+        buildSignalsSection(aggregation, response.searches, response.totalKeywords),
+        rawRefineQueries,
+      );
       await reporter.progress(80, 100, 'Ranking search results');
     } else {
       // LLM classification path
@@ -279,7 +364,7 @@ export async function handleWebSearch(
 
       if (classification.result) {
         markdown = buildClassifiedOutput(
-          classification.result, aggregation, params.extract, response.totalQueries,
+          classification.result, aggregation, params.extract, response.searches, response.totalQueries,
         );
         llmClassified = true;
         await reporter.progress(85, 100, 'Formatted classified results');
@@ -287,7 +372,11 @@ export async function handleWebSearch(
         // Classification failed — fall back to raw
         llmError = classification.error ?? 'Unknown classification error';
         mcpLog('warning', `Classification failed, falling back to raw: ${llmError}`, 'search');
-        markdown = buildRawOutput(params.queries, aggregation, response.searches);
+        markdown = appendSignalsAndFollowUps(
+          buildRawOutput(params.queries, aggregation, response.searches),
+          buildSignalsSection(aggregation, response.searches, response.totalKeywords),
+          undefined,
+        );
         await reporter.progress(85, 100, 'Classification failed, using raw output');
       }
     }
@@ -328,6 +417,16 @@ export function registerWebSearchTool(server: MCPServer): void {
     async (args, ctx) => {
       if (!getCapabilities().search) {
         return toToolResponse(toolFailure(getMissingEnvMessage('search')));
+      }
+
+      const guard = await requireBootstrap(ctx);
+      if (guard) {
+        return guard;
+      }
+
+      const redditGuard = await redditKeywordGuard(ctx, args.queries);
+      if (redditGuard) {
+        return redditGuard;
       }
 
       const reporter = createToolReporter(ctx, 'web-search');

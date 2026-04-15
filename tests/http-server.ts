@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const TEST_PROTOCOL_VERSION = '2025-11-25' as const;
 const TOOL_NAMES = [
+  'start-research',
   'web-search',
   'search-reddit',
   'get-reddit-post',
@@ -297,6 +298,55 @@ async function main(): Promise<void> {
       'expected every tool to expose a description',
     );
 
+    const promptsJson = await readJsonRpcBody(await postJsonRpc(
+      baseUrl,
+      {
+        jsonrpc: '2.0',
+        id: 25,
+        method: 'prompts/list',
+      },
+      sessionId,
+    ));
+    const promptNames = promptsJson.result.prompts.map((prompt: { name: string }) => prompt.name).sort();
+    assert.deepEqual(promptNames, ['deep-research', 'reddit-sentiment']);
+
+    const deepResearchPromptJson = await readJsonRpcBody(await postJsonRpc(
+      baseUrl,
+      {
+        jsonrpc: '2.0',
+        id: 26,
+        method: 'prompts/get',
+        params: {
+          name: 'deep-research',
+          arguments: {
+            topic: 'oauth',
+          },
+        },
+      },
+      sessionId,
+    ));
+    assert.match(JSON.stringify(deepResearchPromptJson.result), /start-research/);
+    assert.match(JSON.stringify(deepResearchPromptJson.result), /oauth/);
+
+    const redditSentimentPromptJson = await readJsonRpcBody(await postJsonRpc(
+      baseUrl,
+      {
+        jsonrpc: '2.0',
+        id: 27,
+        method: 'prompts/get',
+        params: {
+          name: 'reddit-sentiment',
+          arguments: {
+            topic: 'oauth',
+            subreddits: 'typescript, openai',
+          },
+        },
+      },
+      sessionId,
+    ));
+    assert.match(JSON.stringify(redditSentimentPromptJson.result), /search-reddit/);
+    assert.match(JSON.stringify(redditSentimentPromptJson.result), /get-reddit-post/);
+
     // --- Compliance: annotations + outputSchema ---
     const expectedAnnotationKeys = [
       'readOnlyHint',
@@ -330,16 +380,14 @@ async function main(): Promise<void> {
       );
       assert.equal(
         tool.annotations?.openWorldHint,
-        true,
-        `${tool.name}: expected openWorldHint=true`,
+        tool.name === 'start-research' ? false : true,
+        `${tool.name}: unexpected openWorldHint`,
       );
       // inputSchema is required by the MCP spec
       assert.ok(
         tool.inputSchema && typeof tool.inputSchema === 'object',
         `${tool.name}: expected a declared inputSchema`,
       );
-      // outputSchema may or may not be exposed in tools/list depending on
-      // the protocol version and mcp-use version; if present, validate shape
       if (tool.outputSchema) {
         assert.equal(
           typeof tool.outputSchema,
@@ -384,6 +432,31 @@ async function main(): Promise<void> {
     const capabilityJson = await readJsonRpcBody(capabilityResponse);
     assert.ok(capabilityJson.result?.isError, 'expected tool-level error result');
     assert.ok(JSON.stringify(capabilityJson.result).includes('SCRAPEDO_API_KEY'));
+
+    const blockedJson = await callTool(
+      baseUrl,
+      sessionId,
+      'web-search',
+      { queries: ['mcp server oauth'], extract: 'oauth support' },
+      6,
+    );
+    assert.equal(blockedJson.result?.isError, true);
+    assert.match(JSON.stringify(blockedJson.result), /start-research/);
+
+    const startedJson = await callTool(baseUrl, sessionId, 'start-research', {}, 7);
+    assert.notEqual(startedJson.result?.isError, true);
+    assert.equal(typeof startedJson.result?.structuredContent?.content, 'string');
+    assert.match(JSON.stringify(startedJson.result), /Research session started|web-search|search-reddit/);
+
+    const redditBlocked = await callTool(
+      baseUrl,
+      sessionId,
+      'web-search',
+      { queries: ['reddit typescript oauth tips'], extract: 'community advice' },
+      8,
+    );
+    assert.equal(redditBlocked.result?.isError, true);
+    assert.match(JSON.stringify(redditBlocked.result), /search-reddit|Reddit/);
 
     // --- Schema rejection tests ---
     // web-search: requires queries + extract

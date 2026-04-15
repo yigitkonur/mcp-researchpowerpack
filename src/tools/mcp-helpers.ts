@@ -18,7 +18,7 @@ interface ReporterContext {
 export interface ToolExecutionSuccess<T extends Record<string, unknown>> {
   readonly isError: false;
   readonly content: string;
-  readonly structuredContent: T;
+  readonly structuredContent?: T;
 }
 
 export interface ToolExecutionFailure {
@@ -42,7 +42,7 @@ export const NOOP_REPORTER: ToolReporter = {
 
 export function toolSuccess<T extends Record<string, unknown>>(
   content: string,
-  structuredContent: T,
+  structuredContent?: T,
 ): ToolExecutionSuccess<T> {
   return {
     isError: false,
@@ -79,8 +79,12 @@ export function toToolResponse<T extends Record<string, unknown>>(
     return error(result.content);
   }
 
-  return {
-    ...markdown(result.content),
-    structuredContent: result.structuredContent,
-  };
+  if (result.structuredContent) {
+    return {
+      ...markdown(result.content),
+      structuredContent: result.structuredContent,
+    } as TypedCallToolResult<T>;
+  }
+
+  return markdown(result.content) as TypedCallToolResult<never>;
 }

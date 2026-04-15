@@ -36,6 +36,7 @@ import {
   type ToolExecutionResult,
   type ToolReporter,
 } from './mcp-helpers.js';
+import { requireBootstrap } from '../utils/bootstrap-guard.js';
 
 // Module-level singleton - MarkdownCleaner is stateless
 const markdownCleaner = new MarkdownCleaner();
@@ -377,6 +378,11 @@ export function registerScrapeLinksTool(server: MCPServer): void {
     async (args, ctx) => {
       if (!getCapabilities().scraping) {
         return toToolResponse(toolFailure(getMissingEnvMessage('scraping')));
+      }
+
+      const guard = await requireBootstrap(ctx);
+      if (guard) {
+        return guard;
       }
 
       const reporter = createToolReporter(ctx, 'scrape-links');

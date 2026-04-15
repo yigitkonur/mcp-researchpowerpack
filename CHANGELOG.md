@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0] - 2026-04-15
+
+### Added
+- `start-research`, a mandatory orientation tool that bootstraps the research workflow per conversation/session.
+- Conversation-aware workflow state with safe `ctx.client.user()` / `ctx.session.sessionId` keying.
+- `deep-research` and `reddit-sentiment` MCP prompts.
+- `pnpm test:unit` and `pnpm test:evals`, plus an eval artifact writer at `test-results/eval-runs/<timestamp>.json`.
+- A one-shot `web-search` Reddit misuse guard that redirects agents to `search-reddit`.
+
+### Changed
+- Research tools now enforce the `start-research` bootstrap gate before execution.
+- Tool responses now always include structured MCP output alongside markdown content.
+- `web-search` now appends `Signals` plus `Suggested follow-up searches` generated from the classifier output, including raw mode when an LLM is available for refine generation.
+- README and `.env.example` now match the current v4.x workflow and configuration model.
+
 ## [3.11.0] - 2026-04-09
 
 ### Changed (BREAKING)
