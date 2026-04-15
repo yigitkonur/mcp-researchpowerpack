@@ -88,17 +88,17 @@ function buildRawOutput(
 function buildSignalsSection(
   aggregation: SearchAggregation,
   searches: SearchResponse['searches'],
-  totalKeywords: number,
+  totalQueries: number,
 ): string {
   const coverageCount = searches.filter((search) => search.results.length >= 3).length;
   const lowYield = searches
     .filter((search) => search.results.length <= 1)
-    .map((search) => `"${search.keyword}"`);
+    .map((search) => `"${search.query}"`);
   const consensusCount = aggregation.rankedUrls.filter((url) => url.isConsensus).length;
 
   const lines = [
     '**Signals**',
-    `- Coverage: ${coverageCount}/${totalKeywords} queries returned ≥3 results`,
+    `- Coverage: ${coverageCount}/${totalQueries} queries returned ≥3 results`,
     `- Consensus URLs: ${consensusCount}`,
   ];
 
@@ -348,7 +348,7 @@ export async function handleWebSearch(
       }
       markdown = appendSignalsAndFollowUps(
         buildRawOutput(params.queries, aggregation, response.searches),
-        buildSignalsSection(aggregation, response.searches, response.totalKeywords),
+        buildSignalsSection(aggregation, response.searches, response.totalQueries),
         rawRefineQueries,
       );
       await reporter.progress(80, 100, 'Ranking search results');
@@ -374,7 +374,7 @@ export async function handleWebSearch(
         mcpLog('warning', `Classification failed, falling back to raw: ${llmError}`, 'search');
         markdown = appendSignalsAndFollowUps(
           buildRawOutput(params.queries, aggregation, response.searches),
-          buildSignalsSection(aggregation, response.searches, response.totalKeywords),
+          buildSignalsSection(aggregation, response.searches, response.totalQueries),
           undefined,
         );
         await reporter.progress(85, 100, 'Classification failed, using raw output');
