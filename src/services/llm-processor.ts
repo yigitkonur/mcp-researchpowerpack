@@ -70,6 +70,8 @@ function hasStatus(error: unknown): error is { status: number } {
 
 let llmClient: OpenAI | null = null;
 
+type OpenAITextGenerator = Pick<OpenAI, 'chat'>;
+
 export function createLLMProcessor(): OpenAI | null {
   if (!getCapabilities().llmExtraction) return null;
 
@@ -84,6 +86,68 @@ export function createLLMProcessor(): OpenAI | null {
     mcpLog('info', `LLM extraction configured (model: ${LLM_EXTRACTION.MODEL}, baseURL: ${LLM_EXTRACTION.BASE_URL})`, 'llm');
   }
   return llmClient;
+}
+
+function buildChatRequestBody(model: string, prompt: string, maxTokens: number): Record<string, unknown> {
+  const requestBody: Record<string, unknown> = {
+    model,
+    messages: [{ role: 'user', content: prompt }],
+    max_tokens: maxTokens,
+  };
+
+  if (LLM_EXTRACTION.REASONING_EFFORT !== 'none') {
+    requestBody.reasoning_effort = LLM_EXTRACTION.REASONING_EFFORT;
+  }
+
+  return requestBody;
+}
+
+export async function requestTextWithFallback(
+  processor: OpenAITextGenerator,
+  prompt: string,
+  maxTokens: number,
+  operationLabel: string,
+  signal?: AbortSignal,
+): Promise<{ content: string | null; model: string; error?: string }> {
+  const models = [...new Set([
+    LLM_EXTRACTION.MODEL,
+    LLM_EXTRACTION.FALLBACK_MODEL,
+  ].filter(Boolean))];
+
+  let lastError = 'Unknown LLM error';
+
+  for (const model of models) {
+    try {
+      const response = await withStallProtection(
+        (stallSignal) => processor.chat.completions.create(
+          buildChatRequestBody(model, prompt, maxTokens) as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
+          {
+            signal: signal ? AbortSignal.any([stallSignal, signal]) : stallSignal,
+            timeout: LLM_REQUEST_DEADLINE_MS,
+          },
+        ),
+        LLM_STALL_TIMEOUT_MS,
+        3,
+        `${operationLabel} (${model})`,
+      );
+
+      const content = response.choices?.[0]?.message?.content?.trim();
+      if (content) {
+        if (model !== LLM_EXTRACTION.MODEL) {
+          mcpLog('warning', `${operationLabel} succeeded with fallback model ${model}`, 'llm');
+        }
+        return { content, model };
+      }
+
+      lastError = `Empty response from model ${model}`;
+      mcpLog('warning', `${operationLabel} returned empty content for model ${model}`, 'llm');
+    } catch (err: unknown) {
+      lastError = err instanceof Error ? err.message : String(err);
+      mcpLog('warning', `${operationLabel} failed for model ${model}: ${lastError}`, 'llm');
+    }
+  }
+
+  return { content: null, model: LLM_EXTRACTION.FALLBACK_MODEL, error: lastError };
 }
 
 /**
@@ -188,47 +252,28 @@ export async function processContentWithLLM(
     ? `Extract and clean the following content. Focus on: ${config.extract}\n\nContent:\n${truncatedContent}`
     : `Clean and extract the main content from the following text, removing navigation, ads, and irrelevant elements:\n\n${truncatedContent}`;
 
-  const activeModel = LLM_EXTRACTION.MODEL;
-
-  // Build request body
-  const requestBody: Record<string, unknown> = {
-    model: activeModel,
-    messages: [{ role: 'user', content: prompt }],
-    max_tokens: config.max_tokens || LLM_EXTRACTION.MAX_TOKENS,
-  };
-
-  if (LLM_EXTRACTION.REASONING_EFFORT !== 'none') {
-    requestBody.reasoning_effort = LLM_EXTRACTION.REASONING_EFFORT;
-  }
-
   let lastError: StructuredError | undefined;
 
   // Retry loop
   for (let attempt = 0; attempt <= LLM_RETRY_CONFIG.maxRetries; attempt++) {
     try {
       if (attempt === 0) {
-        mcpLog('info', `Starting extraction with ${activeModel}`, 'llm');
+        mcpLog('info', `Starting extraction with ${LLM_EXTRACTION.MODEL}`, 'llm');
       } else {
         mcpLog('warning', `Retry attempt ${attempt}/${LLM_RETRY_CONFIG.maxRetries}`, 'llm');
       }
 
-      const response = await withStallProtection(
-        (stallSignal) => processor.chat.completions.create(
-          requestBody as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
-          {
-            signal: signal ? AbortSignal.any([stallSignal, signal]) : stallSignal,
-            timeout: LLM_REQUEST_DEADLINE_MS,
-          },
-        ),
-        LLM_STALL_TIMEOUT_MS,
-        3,
-        `LLM extraction (${activeModel})`,
+      const response = await requestTextWithFallback(
+        processor,
+        prompt,
+        config.max_tokens || LLM_EXTRACTION.MAX_TOKENS,
+        'LLM extraction',
+        signal,
       );
 
-      const result = response.choices?.[0]?.message?.content;
-      if (result && result.trim()) {
-        mcpLog('info', `Successfully extracted ${result.length} characters`, 'llm');
-        return { content: result, processed: true };
+      if (response.content) {
+        mcpLog('info', `Successfully extracted ${response.content.length} characters`, 'llm');
+        return { content: response.content, processed: true };
       }
 
       // Empty response - not retryable
@@ -387,33 +432,19 @@ ${lines.join('\n')}`;
   try {
     mcpLog('info', `Classifying ${urlsToClassify.length} URLs against objective`, 'llm');
 
-    const requestBody: Record<string, unknown> = {
-      model: LLM_EXTRACTION.MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 4000,
-    };
-
-    if (LLM_EXTRACTION.REASONING_EFFORT !== 'none') {
-      requestBody.reasoning_effort = LLM_EXTRACTION.REASONING_EFFORT;
-    }
-
-    const response = await withStallProtection(
-      (stallSignal) => processor.chat.completions.create(
-        requestBody as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
-        { signal: stallSignal, timeout: LLM_REQUEST_DEADLINE_MS },
-      ),
-      LLM_STALL_TIMEOUT_MS,
-      3,
+    const response = await requestTextWithFallback(
+      processor,
+      prompt,
+      4000,
       'Search classification',
     );
 
-    const raw = response.choices?.[0]?.message?.content;
-    if (!raw?.trim()) {
-      return { result: null, error: 'LLM returned empty classification response' };
+    if (!response.content) {
+      return { result: null, error: response.error ?? 'LLM returned empty classification response' };
     }
 
     // Strip markdown code fences if present
-    const cleaned = raw.replace(/^```(?:json)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
+    const cleaned = response.content.replace(/^```(?:json)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
     const parsed = JSON.parse(cleaned) as ClassificationResult;
 
     // Validate the response shape
@@ -474,32 +505,18 @@ Rules:
 - Keep rationales short.`;
 
   try {
-    const requestBody: Record<string, unknown> = {
-      model: LLM_EXTRACTION.MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 800,
-    };
-
-    if (LLM_EXTRACTION.REASONING_EFFORT !== 'none') {
-      requestBody.reasoning_effort = LLM_EXTRACTION.REASONING_EFFORT;
-    }
-
-    const response = await withStallProtection(
-      (stallSignal) => processor.chat.completions.create(
-        requestBody as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
-        { signal: stallSignal, timeout: LLM_REQUEST_DEADLINE_MS },
-      ),
-      LLM_STALL_TIMEOUT_MS,
-      3,
+    const response = await requestTextWithFallback(
+      processor,
+      prompt,
+      800,
       'Raw-mode refine query generation',
     );
 
-    const raw = response.choices?.[0]?.message?.content;
-    if (!raw?.trim()) {
-      return { result: [], error: 'LLM returned empty raw-mode refine query response' };
+    if (!response.content) {
+      return { result: [], error: response.error ?? 'LLM returned empty raw-mode refine query response' };
     }
 
-    const cleaned = raw.replace(/^```(?:json)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
+    const cleaned = response.content.replace(/^```(?:json)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
     const parsed = JSON.parse(cleaned) as { refine_queries?: RefineQuerySuggestion[] };
 
     return { result: Array.isArray(parsed.refine_queries) ? parsed.refine_queries : [] };

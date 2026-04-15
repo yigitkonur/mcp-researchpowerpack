@@ -194,6 +194,7 @@ function parseLlmReasoningEffort(value: string | undefined): LlmReasoningEffort 
 
 interface LlmExtractionConfig {
   readonly MODEL: string;
+  readonly FALLBACK_MODEL: string;
   readonly BASE_URL: string;
   readonly API_KEY: string;
   readonly MAX_TOKENS: number;
@@ -217,6 +218,7 @@ function getLlmExtraction(): LlmExtractionConfig {
     API_KEY: envWithFallback('LLM_API_KEY', 'LLM_EXTRACTION_API_KEY', 'OPENROUTER_API_KEY') || '',
     BASE_URL: envWithFallback('LLM_BASE_URL', 'LLM_EXTRACTION_BASE_URL', 'OPENROUTER_BASE_URL') || 'https://openrouter.ai/api/v1',
     MODEL: envWithFallback('LLM_MODEL', 'LLM_EXTRACTION_MODEL') || 'openai/gpt-5.4-mini',
+    FALLBACK_MODEL: envWithFallback('LLM_FALLBACK_MODEL', 'RESEARCH_FALLBACK_MODEL') || 'google/gemini-2.5-flash',
     MAX_TOKENS: safeParseInt(envWithFallback('LLM_MAX_TOKENS', 'LLM_EXTRACTION_MAX_TOKENS'), 8000, 1000, 32000),
     REASONING_EFFORT: parseLlmReasoningEffort(envWithFallback('LLM_REASONING', 'LLM_EXTRACTION_REASONING')),
   };
