@@ -5,16 +5,13 @@ export const webSearchParamsSchema = z.object({
     .array(
       z.string()
         .min(1, { message: 'web-search: Query cannot be empty' })
-        .max(500, { message: 'web-search: Query too long (max 500 chars)' })
         .describe('A single Google search query. Each query runs as a separate parallel search.'),
     )
     .min(1, { message: 'web-search: At least 1 query required' })
-    .max(100, { message: 'web-search: Maximum 100 queries allowed' })
     .describe('Search queries to run in parallel via Google. More queries = broader coverage and stronger consensus signals across results.'),
   extract: z
     .string()
-    .min(5, { message: 'web-search: extract must be at least 5 characters' })
-    .max(500, { message: 'web-search: extract too long (max 500 chars)' })
+    .min(1, { message: 'web-search: extract cannot be empty' })
     .describe('What you are looking for. The LLM classifies each result by relevance and generates a synthesis. Be specific: "TypeScript MCP server frameworks with OAuth support" not "MCP servers".'),
   raw: z
     .boolean()

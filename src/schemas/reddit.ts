@@ -12,7 +12,6 @@ export const searchRedditParamsSchema = z.object({
         .describe('A Reddit search query. "site:reddit.com" is appended automatically.'),
     )
     .min(1, { message: 'search-reddit: At least 1 query required' })
-    .max(100, { message: 'search-reddit: Maximum 100 queries allowed' })
     .describe('Search queries for Reddit. Each query is automatically scoped to reddit.com via Google. Returns deduplicated Reddit post URLs.'),
 }).strict();
 
@@ -44,7 +43,6 @@ export const getRedditPostParamsSchema = z.object({
         .describe('A Reddit post URL.'),
     )
     .min(1, { message: 'get-reddit-post: At least 1 URL required' })
-    .max(100, { message: 'get-reddit-post: Maximum 100 URLs allowed' })
     .describe('Reddit post URLs to fetch. Each post is returned with its full threaded comment tree.'),
 }).strict();
 

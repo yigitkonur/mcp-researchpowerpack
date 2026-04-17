@@ -31,12 +31,6 @@ export const ErrorCode = {
 type ErrorCodeType = typeof ErrorCode[keyof typeof ErrorCode];
 
 // ============================================================================
-// Constants
-// ============================================================================
-
-const MAX_ERROR_MSG_LENGTH = 500 as const;
-
-// ============================================================================
 // Structured Error Types
 // ============================================================================
 
@@ -74,7 +68,7 @@ function classifyDomException(error: DOMException): StructuredError {
   if (error.name === 'AbortError') {
     return { code: ErrorCode.TIMEOUT, message: 'Request timed out', retryable: true };
   }
-  return { code: ErrorCode.UNKNOWN_ERROR, message: error.message.substring(0, MAX_ERROR_MSG_LENGTH), retryable: false };
+  return { code: ErrorCode.UNKNOWN_ERROR, message: error.message, retryable: false };
 }
 
 /**
@@ -151,7 +145,7 @@ function classifyByMessage(message: string): StructuredError | null {
 function classifyFallback(message: string, cause?: unknown): StructuredError {
   return {
     code: ErrorCode.UNKNOWN_ERROR,
-    message: message.substring(0, MAX_ERROR_MSG_LENGTH),
+    message,
     retryable: false,
     cause: cause ? String(cause) : undefined,
   };
@@ -173,7 +167,7 @@ export function classifyError(error: unknown): StructuredError {
   if (error instanceof DOMException) return classifyDomException(error);
 
   if (!isErrorLike(error)) {
-    return { code: ErrorCode.UNKNOWN_ERROR, message: String(error).substring(0, MAX_ERROR_MSG_LENGTH), retryable: false };
+    return { code: ErrorCode.UNKNOWN_ERROR, message: String(error), retryable: false };
   }
 
   return classifyByErrorCode(error)
@@ -232,7 +226,7 @@ function classifyHttpError(status: number, message: string): StructuredError {
       if (status >= 400) {
         return { code: ErrorCode.INVALID_INPUT, message: `Client error: ${status}`, retryable: false, statusCode: status };
       }
-      return { code: ErrorCode.UNKNOWN_ERROR, message: `HTTP ${status}: ${message.substring(0, MAX_ERROR_MSG_LENGTH)}`, retryable: false, statusCode: status };
+      return { code: ErrorCode.UNKNOWN_ERROR, message: `HTTP ${status}: ${message}`, retryable: false, statusCode: status };
   }
 }
 

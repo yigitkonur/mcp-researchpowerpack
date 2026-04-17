@@ -13,12 +13,10 @@ export const scrapeLinksParamsSchema = z.object({
   urls: z
     .array(urlSchema)
     .min(1, { message: 'scrape-links: At least 1 URL required' })
-    .max(100, { message: 'scrape-links: Maximum 100 URLs allowed' })
     .describe('Web page URLs to scrape and extract content from.'),
   extract: z
     .string()
-    .min(5, { message: 'scrape-links: extract must be at least 5 characters' })
-    .max(1000, { message: 'scrape-links: extract too long (max 1000 chars)' })
+    .min(1, { message: 'scrape-links: extract cannot be empty' })
     .describe('What to pull from each page. The LLM reads the scraped content and returns only what you specify. Be specific: "pricing tiers | free tier limits | enterprise contact info" not "pricing".'),
 }).strict();
 
