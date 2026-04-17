@@ -83,9 +83,6 @@ export interface ErrorOptions {
   readonly toolName?: string;
 }
 
-/** Maximum length for error messages before truncation */
-const MAX_ERROR_MSG_LENGTH = 500 as const;
-
 /**
  * Format an error response with recovery guidance
  * Designed to keep agents moving — every error includes actionable alternatives
@@ -93,14 +90,9 @@ const MAX_ERROR_MSG_LENGTH = 500 as const;
 export function formatError(opts: ErrorOptions): string {
   const parts: string[] = [];
 
-  // Truncate error message to prevent unbounded output
-  const message = opts.message.length > MAX_ERROR_MSG_LENGTH
-    ? opts.message.slice(0, MAX_ERROR_MSG_LENGTH - 3) + '...'
-    : opts.message;
-
   // Error header
   const prefix = opts.toolName ? `[${opts.toolName}] ` : '';
-  parts.push(`❌ ${prefix}${opts.code}: ${message}`);
+  parts.push(`❌ ${prefix}${opts.code}: ${opts.message}`);
 
   // Retryable hint
   if (opts.retryable) {

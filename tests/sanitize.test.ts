@@ -11,7 +11,7 @@ test('removes control characters, raw urls, and collapses markdown links', () =>
   assert.equal(sanitized, 'hello click me world');
 });
 
-test('caps the suggestion at 80 characters', () => {
+test('preserves full length — no artificial cap', () => {
   const sanitized = sanitizeSuggestion('x'.repeat(120));
-  assert.equal(sanitized.length, 80);
+  assert.equal(sanitized.length, 120);
 });

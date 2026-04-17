@@ -127,11 +127,10 @@ export async function handleSearchReddit(
 ): Promise<ToolExecutionResult<SearchRedditOutput>> {
   try {
     const startTime = Date.now();
-    const limited = queries.slice(0, 100);
     const client = new SearchClient(apiKey);
-    await reporter.log('info', `Searching Reddit with ${limited.length} queries`);
+    await reporter.log('info', `Searching Reddit with ${queries.length} queries`);
     await reporter.progress(15, 100, 'Searching Reddit');
-    const results = await client.searchRedditMultiple(limited);
+    const results = await client.searchRedditMultiple(queries);
 
     // Collect all unique URLs
     const allUrls = new Set<string>();
@@ -144,7 +143,7 @@ export async function handleSearchReddit(
     if (allUrls.size === 0) {
       return toolFailure(formatError({
         code: 'NO_RESULTS',
-        message: `No Reddit URLs found for any of the ${limited.length} queries`,
+        message: `No Reddit URLs found for any of the ${queries.length} queries`,
         toolName: 'search-reddit',
         howToFix: ['Try broader or simpler search terms', 'Check spelling'],
         alternatives: ['web-search(queries=["topic reddit discussion"], extract="...") — broader Google search'],
@@ -154,14 +153,14 @@ export async function handleSearchReddit(
     const urlList = [...allUrls];
     const content = urlList.join('\n');
 
-    await reporter.log('info', `Found ${urlList.length} unique Reddit URLs across ${limited.length} queries`);
+    await reporter.log('info', `Found ${urlList.length} unique Reddit URLs across ${queries.length} queries`);
     await reporter.progress(100, 100, 'Reddit search complete');
 
     const executionTime = Date.now() - startTime;
     return toolSuccess(content, {
       content,
       metadata: {
-        total_items: limited.length,
+        total_items: queries.length,
         successful: urlList.length,
         failed: 0,
         execution_time_ms: executionTime,

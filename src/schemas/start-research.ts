@@ -4,7 +4,6 @@ export const startResearchParamsSchema = z.object({
   goal: z
     .string()
     .min(1, { message: 'start-research: goal cannot be empty' })
-    .max(500, { message: 'start-research: goal too long (max 500 chars)' })
     .optional()
     .describe('Optional research goal for this conversation.'),
 }).strict();
