@@ -110,7 +110,7 @@ function buildSignalsSection(
 }
 
 export function buildSuggestedFollowUpsSection(
-  refineQueries: Array<{ query: string; rationale: string }> | undefined,
+  refineQueries: Array<{ query: string; rationale?: string; gap_id?: number; gap_description?: string }> | undefined,
 ): string {
   if (!refineQueries || refineQueries.length === 0) {
     return '';
@@ -119,10 +119,21 @@ export function buildSuggestedFollowUpsSection(
   const lines = ['## Suggested follow-up searches', ''];
 
   for (const item of refineQueries) {
-    lines.push(`- ${sanitizeSuggestion(item.query)} — ${sanitizeSuggestion(item.rationale)}`);
+    const query = sanitizeSuggestion(item.query ?? '');
+    if (!query) continue;
+    const rationale = sanitizeSuggestion(item.rationale ?? '');
+    const gapTag = typeof item.gap_id === 'number'
+      ? ` _(closes gap [${item.gap_id}])_`
+      : item.gap_description
+        ? ` _(${sanitizeSuggestion(item.gap_description)})_`
+        : '';
+    lines.push(rationale
+      ? `- ${query} — ${rationale}${gapTag}`
+      : `- ${query}${gapTag}`,
+    );
   }
 
-  return lines.join('\n');
+  return lines.length === 2 ? '' : lines.join('\n');
 }
 
 export function appendSignalsAndFollowUps(
@@ -149,21 +160,18 @@ function buildClassifiedOutput(
 ): string {
   const rankedUrls = aggregation.rankedUrls;
 
-  // Build lookup from rank → url data
-  const urlByRank = new Map(rankedUrls.map(u => [u.rank, u]));
+  // Build tier → entries mapping (keep url data alongside classifier metadata)
+  const entryByRank = new Map(classification.results.map((r) => [r.rank, r]));
 
-  // Build tier → entries mapping
   const tiers = {
     high: [] as typeof rankedUrls,
     maybe: [] as typeof rankedUrls,
     other: [] as typeof rankedUrls,
   };
 
-  // Classify based on LLM response
-  const tierMap = new Map(classification.results.map(r => [r.rank, r.tier]));
-
   for (const url of rankedUrls) {
-    const tier = tierMap.get(url.rank);
+    const entry = entryByRank.get(url.rank);
+    const tier = entry?.tier;
     if (tier === 'HIGHLY_RELEVANT') {
       tiers.high.push(url);
     } else if (tier === 'MAYBE_RELEVANT') {
@@ -175,58 +183,76 @@ function buildClassifiedOutput(
 
   const lines: string[] = [];
 
-  // Header with generated title and synthesis
+  // Header with generated title, synthesis, and confidence
   lines.push(`## ${classification.title}`);
   lines.push(`> Looking for: ${extract}`);
   lines.push(`> ${totalQueries} queries → ${rankedUrls.length} URLs → ${tiers.high.length} highly relevant, ${tiers.maybe.length} possibly relevant`);
+  if (classification.confidence) {
+    const confReason = classification.confidence_reason ? ` — ${classification.confidence_reason}` : '';
+    lines.push(`> Confidence: \`${classification.confidence}\`${confReason}`);
+  }
   lines.push('');
   lines.push(`**Summary:** ${classification.synthesis}`);
   lines.push('');
 
+  // Helper: render one row with optional source_type + reason
+  const renderRichRow = (url: typeof rankedUrls[number]): string => {
+    const entry = entryByRank.get(url.rank);
+    const coveragePct = Math.round(url.coverageRatio * 100);
+    const seenIn = `${url.frequency}/${totalQueries} (${coveragePct}%)`;
+    const sourceType = entry?.source_type ? `\`${entry.source_type}\`` : '—';
+    const reason = entry?.reason ? entry.reason.replace(/\|/g, '\\|') : '—';
+    return `| ${url.rank} | [${url.title}](${url.url}) | ${sourceType} | ${seenIn} | ${reason} |`;
+  };
+
   // Highly Relevant tier
   if (tiers.high.length > 0) {
     lines.push(`### Highly Relevant (${tiers.high.length})`);
-    lines.push('| # | URL | Seen in |');
-    lines.push('|---|-----|---------|');
-    for (const url of tiers.high) {
-      const coveragePct = Math.round(url.coverageRatio * 100);
-      const queries = url.queries.map(q => `"${q}"`).join(', ');
-      lines.push(`| ${url.rank} | [${url.title}](${url.url}) | ${url.frequency}/${totalQueries} (${coveragePct}%) |`);
-    }
+    lines.push('| # | URL | Source | Seen in | Why |');
+    lines.push('|---|-----|--------|---------|-----|');
+    for (const url of tiers.high) lines.push(renderRichRow(url));
     lines.push('');
   }
 
   // Maybe Relevant tier
   if (tiers.maybe.length > 0) {
     lines.push(`### Maybe Relevant (${tiers.maybe.length})`);
-    lines.push('| # | URL | Seen in |');
-    lines.push('|---|-----|---------|');
-    for (const url of tiers.maybe) {
-      const coveragePct = Math.round(url.coverageRatio * 100);
-      lines.push(`| ${url.rank} | [${url.title}](${url.url}) | ${url.frequency}/${totalQueries} (${coveragePct}%) |`);
-    }
+    lines.push('| # | URL | Source | Seen in | Why |');
+    lines.push('|---|-----|--------|---------|-----|');
+    for (const url of tiers.maybe) lines.push(renderRichRow(url));
     lines.push('');
   }
 
   // Other tier — with query attribution
   if (tiers.other.length > 0) {
     lines.push(`### Other Results (${tiers.other.length})`);
-    lines.push('| # | URL | Score | Queries |');
-    lines.push('|---|-----|-------|----------|');
+    lines.push('| # | URL | Source | Score | Queries |');
+    lines.push('|---|-----|--------|-------|---------|');
     for (const url of tiers.other) {
-      const queryList = url.queries.map(q => `"${q}"`).join(', ');
+      const entry = entryByRank.get(url.rank);
+      const queryList = url.queries.map((q) => `"${q}"`).join(', ');
+      const sourceType = entry?.source_type ? `\`${entry.source_type}\`` : '—';
       let domain: string;
       try {
         domain = new URL(url.url).hostname.replace(/^www\./, '');
       } catch {
         domain = url.url;
       }
-      lines.push(`| ${url.rank} | ${domain} | ${url.score.toFixed(1)} | ${queryList} |`);
+      lines.push(`| ${url.rank} | ${domain} | ${sourceType} | ${url.score.toFixed(1)} | ${queryList} |`);
     }
     lines.push('');
   }
 
   lines.push(buildSignalsSection(aggregation, searches, totalQueries));
+
+  // Gaps section — what the current results don't answer
+  if (classification.gaps && classification.gaps.length > 0) {
+    lines.push('');
+    lines.push('## Gaps');
+    for (const gap of classification.gaps) {
+      lines.push(`- **[${gap.id}]** ${gap.description}`);
+    }
+  }
 
   const followUps = buildSuggestedFollowUpsSection(classification.refine_queries);
   if (followUps) {
@@ -360,6 +386,7 @@ export async function handleWebSearch(
         params.extract,
         response.totalQueries,
         llmProcessor,
+        params.queries,
       );
 
       if (classification.result) {
@@ -404,7 +431,7 @@ export function registerWebSearchTool(server: MCPServer): void {
       name: 'web-search',
       title: 'Web Search',
       description:
-        'Run up to 100 Google searches in parallel, aggregate and deduplicate results, then classify each URL by relevance to your extract goal. Returns a tiered table: highly relevant, maybe relevant, and other. Set raw=true for unclassified ranked results.',
+        'Fan out many Google searches in parallel (no hard cap), aggregate and deduplicate results, then classify each URL against your extract goal. Returns a tiered Markdown report: HIGHLY_RELEVANT / MAYBE_RELEVANT / OTHER with source_type and a per-result reason; plus a grounded synthesis with rank citations, a domain-independence confidence, a `## Gaps` list of what the current results do not answer, and `## Suggested follow-up searches` tied to gap ids (non-paraphrases of your prior queries). Think of `queries` as concept groups — diverse facets, not paraphrases. Set `raw=true` to skip classification and get an unclassified ranked list.',
       schema: webSearchParamsSchema,
       outputSchema: webSearchOutputSchema,
       annotations: {

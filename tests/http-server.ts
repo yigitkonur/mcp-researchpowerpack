@@ -446,11 +446,12 @@ async function main(): Promise<void> {
     const startedJson = await callTool(baseUrl, sessionId, 'start-research', {}, 7);
     assert.notEqual(startedJson.result?.isError, true);
     assert.equal(typeof startedJson.result?.structuredContent?.content, 'string');
-    assert.match(JSON.stringify(startedJson.result), /Research session started|web-search|search-reddit/);
-    assert.match(JSON.stringify(startedJson.result), /up to 100 queries|up to 100/);
+    assert.match(JSON.stringify(startedJson.result), /Research session started/);
+    assert.match(JSON.stringify(startedJson.result), /Concept groups/);
+    assert.match(JSON.stringify(startedJson.result), /research loop/i);
     assert.match(JSON.stringify(startedJson.result), /scrape-links/);
     assert.match(JSON.stringify(startedJson.result), /semantic instruction|semantic/);
-    assert.match(JSON.stringify(startedJson.result), /search again|Loop back/);
+    assert.match(JSON.stringify(startedJson.result), /Reddit branch/);
 
     const redditBlocked = await callTool(
       baseUrl,

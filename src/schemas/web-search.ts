@@ -5,14 +5,18 @@ export const webSearchParamsSchema = z.object({
     .array(
       z.string()
         .min(1, { message: 'web-search: Query cannot be empty' })
-        .describe('A single Google search query. Each query runs as a separate parallel search.'),
+        .describe('A single Google search query. Each query runs as a separate parallel search. Use operators (site:, quotes, verbatim version numbers) to sharpen retrieval.'),
     )
     .min(1, { message: 'web-search: At least 1 query required' })
-    .describe('Search queries to run in parallel via Google. More queries = broader coverage and stronger consensus signals across results.'),
+    .describe(
+      'Search queries to run in parallel via Google. Think of these as **concept groups** — clusters of semantically distinct facets of your research goal, each probing a DIFFERENT angle (official spec, implementation, failures, comparison, sentiment, changelog, CVE, pricing). Fire all groups in ONE call as a flat array. Overlapping queries waste budget; orthogonal facets multiply coverage. A narrow bug needs 10–20 queries across 2–3 facets; a comparison needs 25–35 across 4–6 facets; open-ended synthesis needs 40–80 across 8+ facets.',
+    ),
   extract: z
     .string()
     .min(1, { message: 'web-search: extract cannot be empty' })
-    .describe('What you are looking for. The LLM classifies each result by relevance and generates a synthesis. Be specific: "TypeScript MCP server frameworks with OAuth support" not "MCP servers".'),
+    .describe(
+      'Semantic instruction for the relevance classifier — what "relevant" means for THIS goal. Drives tiering (HIGHLY_RELEVANT / MAYBE_RELEVANT / OTHER), synthesis, gap analysis, and refine-query suggestions. Be specific: "OAuth 2.1 support in TypeScript MCP frameworks — runnable code, not marketing", not "MCP OAuth". The classifier uses this to choose a source-of-truth rubric (vendor_doc for spec, github for bugs, reddit/blog for migration/sentiment, cve_databases for security).',
+    ),
   raw: z
     .boolean()
     .default(false)

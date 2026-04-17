@@ -34,6 +34,7 @@ interface ProcessingConfig {
   readonly enabled: boolean;
   readonly extract: string | undefined;
   readonly max_tokens?: number;
+  readonly url?: string;
 }
 
 interface LLMResult {
@@ -248,9 +249,82 @@ export async function processContentWithLLM(
     ? content.substring(0, MAX_LLM_INPUT_CHARS) + '\n\n[Content truncated due to length]'
     : content;
 
+  // Sanitize URL before sending to LLM: drop query string and fragment
+  // so signed URLs, session tokens, auth params, or tracking hashes never
+  // land in a third-party LLM prompt. Keep origin + path for page-type classification.
+  const safeUrl = (() => {
+    if (!config.url) return undefined;
+    try {
+      const u = new URL(config.url);
+      return `${u.origin}${u.pathname}`;
+    } catch {
+      return undefined;
+    }
+  })();
+  const urlLine = safeUrl ? `PAGE URL: ${safeUrl}\n\n` : '';
+
   const prompt = config.extract
-    ? `Extract and clean the following content. Focus on: ${config.extract}\n\nContent:\n${truncatedContent}`
-    : `Clean and extract the main content from the following text, removing navigation, ads, and irrelevant elements:\n\n${truncatedContent}`;
+    ? `You are a factual extractor for a research agent. Extract ONLY the information that matches the instruction below. Do not summarize, interpret, or editorialize.
+
+${urlLine}EXTRACTION INSTRUCTION: ${config.extract}
+
+STEP 1 — Classify this page. Look at the URL if present, plus structural cues (code blocks, table patterns, comment threads, marketing copy). Pick ONE:
+\`docs | changelog | github-readme | github-thread | reddit | hackernews | forum | blog | marketing | announcement | qa | cve | paper | release-notes | other\`
+
+STEP 2 — Adjust emphasis by page type:
+- docs / changelog / github-readme / release-notes → API signatures, version numbers, flags, exact config keys, code blocks. Copy verbatim. Preserve tables as tables.
+- github-thread → weight MAINTAINER comments (label "[maintainer]") over drive-by commenters. Preserve stacktraces verbatim. Capture chronological resolution — what was decided and when. Link the accepted-fix commit/PR if referenced.
+- reddit / hackernews / forum → lived experience. Quote verbatim with attribution ("u/foo wrote: …" or "user <name>"). Prioritize replies with stack details, specific failure stories, or replies that contradict the OP. Record overall sentiment distribution as one bullet if clear skew ("~70% agree / ~20% dissent / rest off-topic"). Drop context-free opinions ("this sucks") from Matches.
+- blog → prioritize concrete reproductions, code, measurements. If the author makes a claim without evidence, mark "[unsourced claim]".
+- marketing / announcement → pricing tiers, feature matrices verbatim, free-tier quotas, enterprise contact. Preserve tables as tables. Treat roadmap/future-tense claims skeptically — note them as "[announced, not shipped]" when framing is future-tense.
+- qa (stackoverflow) → accepted answer's code + high-voted disagreements. Always note the answer date — SO rots.
+- cve → CVSS vector verbatim, CWE, CPE ranges, affected versions, fix version, references. Each with its label.
+- paper → claim, method, dataset, benchmark numbers, comparison baseline. Preserve numeric deltas verbatim.
+
+STEP 3 — Emit markdown with these sections, in order:
+
+## Source
+- URL: <verbatim if visible, else "unknown">
+- Page type: <the type you picked>
+- Page date: <verbatim if visible, else "not visible">
+- Author / maintainer (if identifiable): <verbatim>
+
+## Matches
+One bullet per distinct piece of matching info:
+- **<short label>** — the information. Quote VERBATIM for: numbers, versions, dates, API names, prices, error messages, stacktraces, CVSS vectors, benchmark scores, command flags, proper nouns, and people's words. Backticks for code/identifiers. Preserve tables.
+
+## Not found
+Every part of the extraction instruction this page did NOT answer. Be explicit. Example: "Enterprise pricing contact — not present on this page."
+
+## Follow-up signals
+Short bullets — NEW angles this page surfaced that the agent should investigate. Include: new terms, unexpected vendor names, contradicting claims, referenced-but-unscraped URLs. Copy URLs VERBATIM from the source; if only anchor text is visible, write "anchor: <text> (URL not in scraped content)". Skip this section if nothing new surfaced. Do NOT invent.
+
+## Contradictions
+(Include this section only if the page contains internally contradictory claims.) Bullet each contradiction with both sides quoted verbatim.
+
+## Truncation
+(Include only if content appears cut mid-element.) "Content cut mid-<table row / code block / comment / paragraph>; extraction may be incomplete for <section>."
+
+RULES:
+- Never paraphrase numbers, versions, code, or quoted text.
+- If an instruction item is not answered, it goes in "Not found" — do NOT invent an answer to please the caller.
+- Preserve code blocks, command examples, tables exactly.
+- Do NOT add commentary or recommendations outside "Follow-up signals".
+- Page language ≠ English: quote verbatim in the original language AND provide a parenthetical gloss in English.
+- Content clearly failed to load: return ONLY a single line, choosing from:
+  \`## Matches\\n_Page did not load: 404_\`
+  \`## Matches\\n_Page did not load: login-wall_\`
+  \`## Matches\\n_Page did not load: paywall_\`
+  \`## Matches\\n_Page did not load: JS-render-empty_\`
+  \`## Matches\\n_Page did not load: non-text-asset_\`
+  \`## Matches\\n_Page did not load: truncated-before-relevant-section_\`
+
+Content:
+${truncatedContent}`
+    : `Clean the following page content: drop navigation, ads, cookie banners, footers, author bios, related-article lists. Preserve headings, paragraphs, code blocks, tables, and inline links as \`[text](url)\`. Do NOT summarize — preserve the full body.
+
+${urlLine}Content:
+${truncatedContent}`;
 
   let lastError: StructuredError | undefined;
 
@@ -341,6 +415,13 @@ type ClassificationTier = 'HIGHLY_RELEVANT' | 'MAYBE_RELEVANT' | 'OTHER';
 export interface ClassificationEntry {
   readonly rank: number;
   readonly tier: ClassificationTier;
+  readonly source_type?: string;
+  readonly reason?: string;
+}
+
+export interface ClassificationGap {
+  readonly id: number;
+  readonly description: string;
 }
 
 export interface ClassificationResult {
@@ -350,13 +431,18 @@ export interface ClassificationResult {
   readonly refine_queries?: Array<{
     readonly query: string;
     readonly rationale: string;
+    readonly gap_id?: number;
   }>;
   readonly confidence?: 'high' | 'medium' | 'low';
+  readonly confidence_reason?: string;
+  readonly gaps?: ClassificationGap[];
 }
 
 export interface RefineQuerySuggestion {
   readonly query: string;
   readonly rationale: string;
+  readonly gap_id?: number;
+  readonly gap_description?: string;
 }
 
 /**
@@ -376,6 +462,7 @@ export async function classifySearchResults(
   objective: string,
   totalQueries: number,
   processor: OpenAI,
+  previousQueries: readonly string[] = [],
 ): Promise<{ result: ClassificationResult | null; error?: string }> {
   const urlsToClassify = rankedUrls.slice(0, MAX_CLASSIFICATION_URLS);
 
@@ -394,37 +481,71 @@ export async function classifySearchResults(
     lines.push(`[${url.rank}] ${url.title} — ${domain} — ${snippet}`);
   }
 
-  const prompt = `You are classifying search results. The user is looking for: ${objective}
+  const prevQueriesBlock = previousQueries.length > 0
+    ? previousQueries.map((q) => `- ${q}`).join('\n')
+    : '- (none provided)';
+  const today = new Date().toISOString().slice(0, 10);
 
-Classify each result and generate a summary.
+  const prompt = `You are the relevance filter for a research agent. Classify each search result below against the objective and produce a structured analysis.
 
-Return JSON (no markdown, no code fences):
+OBJECTIVE: ${objective}
+TODAY: ${today}
+
+PREVIOUS QUERIES (already run — do NOT paraphrase in refine_queries):
+${prevQueriesBlock}
+
+Return ONLY a JSON object (no markdown, no code fences):
+
 {
-  "title": "2-8 word topic label for these results",
-  "synthesis": "2-3 sentence overview of what the relevant results reveal about this topic",
+  "title": "2–8 word label for this RESULT CLUSTER (not the objective)",
+  "synthesis": "3–5 sentences grounded in the results. Every non-trivial claim cites a rank in [brackets], e.g. '[3] documents the flag; [7][12] report it is broken on macOS.' A synthesis with zero citations is invalid.",
   "confidence": "high | medium | low",
+  "confidence_reason": "one sentence — why",
+  "gaps": [
+    { "id": 0, "description": "specific, actionable thing the current results do NOT answer — not 'more info needed'" }
+  ],
   "refine_queries": [
-    { "query": "follow-up search to run next", "rationale": "why it helps" }
+    { "query": "concrete next search", "gap_id": 0, "rationale": "≤12 words" }
   ],
   "results": [
-    {"rank": 1, "tier": "HIGHLY_RELEVANT"},
-    {"rank": 2, "tier": "MAYBE_RELEVANT"},
-    ...
+    {
+      "rank": 1,
+      "tier": "HIGHLY_RELEVANT | MAYBE_RELEVANT | OTHER",
+      "source_type": "vendor_doc | github | reddit | hackernews | blog | news | marketing | stackoverflow | cve | paper | release_notes | aggregator | other",
+      "reason": "≤12 words citing the snippet cue that drove the tier"
+    }
   ]
 }
 
-Tiers:
-- HIGHLY_RELEVANT: Directly addresses the objective. Worth clicking/scraping.
-- MAYBE_RELEVANT: Tangentially related. Might have useful context.
-- OTHER: Not relevant to the specific objective.
+SOURCE-OF-TRUTH RUBRIC (the "primary source" is goal-dependent — infer goal type from the objective):
+- spec / API / config questions → vendor_doc, github (README, RFC), release_notes are primary
+- bug / failure-mode questions → github (issue/PR), stackoverflow are primary
+- migration / sentiment / lived-experience → reddit, hackernews, blog are primary; docs are secondary
+- pricing / commercial → marketing (the vendor's own pricing page IS the primary source, but treat feature lists skeptically)
+- security / CVE → cve databases, distro security trackers (nvd.nist.gov, security-tracker.debian.org, ubuntu.com/security) are primary
+- synthesis / open-ended → blend; no single type is primary
+- product launch → vendor_doc + news + marketing for the launch itself; blogs + reddit for independent verification
 
-Rules:
-- Classify ALL ${urlsToClassify.length} results. Do not skip any.
-- Only use the three tier values above.
-- Judge by title, site name, and snippet only. Do NOT fetch any URLs.
-- If unsure, classify as MAYBE_RELEVANT.
-- Provide 3-6 diverse follow-up searches in refine_queries.
-- Keep follow-up searches concrete and non-duplicative.
+FRESHNESS: proportional to topic velocity. For a week-old release, demote anything older than 30 days. For general tech questions, demote older than 18 months. For stable protocols (HTTP, TCP, POSIX), don't demote by age.
+
+CONFIDENCE:
+- high = ≥3 HIGHLY_RELEVANT results from INDEPENDENT domains agree on the core answer
+- medium = ≥2 HIGHLY_RELEVANT exist but disagree or share a domain; OR a single authoritative primary source answers it
+- low = otherwise; snippet-only judgments cap at medium
+
+REFINE QUERIES — each MUST differ from every previousQuery by:
+- a new operator (site:, quotes, verbatim version number), OR
+- a domain-specific noun ABSENT from every prior query
+Adding a year alone does NOT count as differentiation.
+Each refine_query MUST reference a specific gap_id from the gaps array above.
+Produce 4–8 refine_queries total. Cover: (a) a primary-source probe, (b) a temporal sharpener, (c) a failure-mode or comparison probe, (d) at least one new-term probe seeded by a specific result's snippet.
+
+RULES:
+- Classify ALL ${urlsToClassify.length} results. Do not skip or collapse any.
+- Use only the three tier values.
+- Judge from title + domain + snippet only. Do NOT invent facts not present in the snippet.
+- If ALL results are OTHER: synthesis = "", confidence = "low", and \`gaps\` must explicitly state why the current queries missed the target.
+- Casing: tier = UPPERCASE_WITH_UNDERSCORES, confidence = lowercase.
 
 SEARCH RESULTS (${urlsToClassify.length} URLs from ${totalQueries} queries):
 ${lines.join('\n')}`;
@@ -432,10 +553,14 @@ ${lines.join('\n')}`;
   try {
     mcpLog('info', `Classifying ${urlsToClassify.length} URLs against objective`, 'llm');
 
+    // Output budget needs room for: 50 results × (rank + tier + source_type + reason)
+    // plus gaps[] with descriptions, refine_queries[] with rationales, synthesis with citations,
+    // title, confidence, and confidence_reason. 4000 truncates JSON mid-structure for full outputs;
+    // 8000 leaves headroom for the richest cases.
     const response = await requestTextWithFallback(
       processor,
       prompt,
-      4000,
+      8000,
       'Search classification',
     );
 
@@ -447,8 +572,10 @@ ${lines.join('\n')}`;
     const cleaned = response.content.replace(/^```(?:json)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
     const parsed = JSON.parse(cleaned) as ClassificationResult;
 
-    // Validate the response shape
-    if (!parsed.title || !parsed.synthesis || !Array.isArray(parsed.results)) {
+    // Validate the response shape.
+    // Note: synthesis is typed not truthy — the prompt explicitly instructs an empty string
+    // for the all-OTHER case, and we must not reject that.
+    if (!parsed.title || typeof parsed.synthesis !== 'string' || !Array.isArray(parsed.results)) {
       return { result: null, error: 'LLM response missing required fields (title, synthesis, results)' };
     }
 
@@ -484,25 +611,27 @@ export async function suggestRefineQueriesForRawMode(
 
   const prompt = `You are generating follow-up search queries for an agent using raw web-search results.
 
-Return JSON (no markdown, no code fences):
+Return ONLY a JSON object (no markdown, no code fences):
 {
   "refine_queries": [
-    { "query": "next search query", "rationale": "why it helps" }
+    { "query": "next search query", "gap_description": "what gap this closes", "rationale": "≤12 words on why" }
   ]
 }
 
-Objective: ${objective}
-Original queries:
+OBJECTIVE: ${objective}
+
+PREVIOUS QUERIES (already run — do NOT paraphrase):
 ${originalQueries.map((query) => `- ${query}`).join('\n')}
 
-Top result titles:
+TOP RESULT TITLES (to seed new-term probes):
 ${lines.join('\n')}
 
-Rules:
-- Produce 3-6 diverse, non-duplicative follow-up queries.
-- Prefer queries that deepen, compare, or validate the topic.
+RULES:
+- Produce 4–6 diverse follow-ups. Cover: (a) a primary-source probe (site:, RFC, vendor docs); (b) a temporal sharpener (changelog, version number); (c) a failure-mode or comparison probe; (d) at least one new-term probe seeded by a specific result title.
+- Each query MUST differ from every previousQuery by either a new operator (site:, quotes, a verbatim version number) OR a domain-specific noun absent from every prior query. Adding a year alone does NOT count.
+- Each refine_query MUST include a \`gap_description\` naming what the current results don't answer.
 - Do not include URLs.
-- Keep rationales short.`;
+- Keep rationales ≤12 words.`;
 
   try {
     const response = await requestTextWithFallback(
@@ -525,4 +654,212 @@ Rules:
     mcpLog('error', `Raw-mode refine query generation failed: ${message}`, 'llm');
     return { result: [], error: message };
   }
+}
+
+// ============================================================================
+// Research Brief — goal-aware orientation (called by start-research)
+// ============================================================================
+
+export interface ResearchBriefConceptGroup {
+  readonly facet: string;
+  readonly queries: readonly string[];
+}
+
+export interface ResearchBrief {
+  readonly goal_class: string;
+  readonly goal_class_reason: string;
+  readonly source_priority: readonly string[];
+  readonly sources_to_deprioritize: readonly string[];
+  readonly fire_reddit_branch: boolean;
+  readonly fire_reddit_reason: string;
+  readonly freshness_window: string;
+  readonly concept_groups: readonly ResearchBriefConceptGroup[];
+  readonly anticipated_gaps: readonly string[];
+  readonly first_scrape_targets: readonly string[];
+  readonly success_criteria: readonly string[];
+}
+
+const VALID_GOAL_CLASSES = new Set([
+  'spec', 'bug', 'migration', 'sentiment', 'pricing', 'security',
+  'synthesis', 'product_launch', 'other',
+]);
+
+const VALID_FRESHNESS = new Set(['days', 'weeks', 'months', 'years']);
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string');
+}
+
+function isConceptGroupArray(value: unknown): value is ResearchBriefConceptGroup[] {
+  return Array.isArray(value) && value.every((g) => {
+    if (typeof g !== 'object' || g === null) return false;
+    const facet = (g as Record<string, unknown>).facet;
+    const queries = (g as Record<string, unknown>).queries;
+    return typeof facet === 'string'
+      && facet.trim().length > 0
+      && isStringArray(queries)
+      && queries.length > 0
+      && queries.every((q) => q.trim().length > 0);
+  });
+}
+
+export function parseResearchBrief(raw: string): ResearchBrief | null {
+  try {
+    const cleaned = raw.replace(/^```(?:json)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
+    const parsed = JSON.parse(cleaned) as Record<string, unknown>;
+
+    const goal_class = typeof parsed.goal_class === 'string' ? parsed.goal_class : null;
+    if (!goal_class || !VALID_GOAL_CLASSES.has(goal_class)) return null;
+
+    const freshness_window = typeof parsed.freshness_window === 'string' ? parsed.freshness_window : null;
+    if (!freshness_window || !VALID_FRESHNESS.has(freshness_window)) return null;
+
+    if (typeof parsed.fire_reddit_branch !== 'boolean') return null;
+    if (!isConceptGroupArray(parsed.concept_groups) || parsed.concept_groups.length === 0) return null;
+
+    return {
+      goal_class,
+      goal_class_reason: typeof parsed.goal_class_reason === 'string' ? parsed.goal_class_reason : '',
+      source_priority: isStringArray(parsed.source_priority) ? parsed.source_priority : [],
+      sources_to_deprioritize: isStringArray(parsed.sources_to_deprioritize) ? parsed.sources_to_deprioritize : [],
+      fire_reddit_branch: parsed.fire_reddit_branch,
+      fire_reddit_reason: typeof parsed.fire_reddit_reason === 'string' ? parsed.fire_reddit_reason : '',
+      freshness_window,
+      concept_groups: parsed.concept_groups,
+      anticipated_gaps: isStringArray(parsed.anticipated_gaps) ? parsed.anticipated_gaps : [],
+      first_scrape_targets: isStringArray(parsed.first_scrape_targets) ? parsed.first_scrape_targets : [],
+      success_criteria: isStringArray(parsed.success_criteria) ? parsed.success_criteria : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function generateResearchBrief(
+  goal: string,
+  processor: OpenAI,
+  signal?: AbortSignal,
+): Promise<ResearchBrief | null> {
+  const today = new Date().toISOString().slice(0, 10);
+
+  const prompt = `You are a research planner. An agent is about to run a multi-pass research loop on the goal below. Produce a tailored research brief in JSON.
+
+GOAL: ${goal}
+TODAY: ${today}
+
+Return ONLY a JSON object (no markdown, no code fences):
+
+{
+  "goal_class": "spec | bug | migration | sentiment | pricing | security | synthesis | product_launch | other",
+  "goal_class_reason": "one sentence — why this class",
+  "source_priority": ["ordered list from: vendor_docs, changelog, github_code, github_issues, reddit, hackernews, blogs, marketing_pages, stackoverflow, cve_databases, arxiv, news, release_notes"],
+  "sources_to_deprioritize": ["same vocabulary — sources that add noise for this goal"],
+  "fire_reddit_branch": true,
+  "fire_reddit_reason": "one sentence — why yes or why no",
+  "freshness_window": "days | weeks | months | years",
+  "concept_groups": [
+    {
+      "facet": "2-4 word facet name",
+      "queries": ["5-10 concrete Google queries using operators where helpful: site:, quotes, version numbers"]
+    }
+  ],
+  "anticipated_gaps": ["2-5 things likely missing after pass 1 that the agent should watch for"],
+  "first_scrape_targets": ["domain names or URL patterns most likely to contain the answer"],
+  "success_criteria": ["2-4 concrete facts the agent must verify before declaring done"]
+}
+
+Rules:
+- Concept groups must probe DIFFERENT facets. Same noun-phrase cannot repeat across groups.
+- Queries within a group vary by operator/phrasing but probe the same facet.
+- Total queries across all groups: 25–50. Narrow bugs fewer; open synthesis more.
+- If the goal mentions a recent release / date / version, freshness_window = days or weeks.
+- Do NOT invent vendor names you are uncertain exist. Leave shaky queries out.
+- source_priority MUST reflect the goal type — docs for spec, github_issues for bugs, reddit/hackernews/blogs for migration/sentiment, cve_databases for security.
+- fire_reddit_branch should be false for CVE / pricing / API spec / primary-source lookups.`;
+
+  try {
+    const response = await requestTextWithFallback(
+      processor,
+      prompt,
+      2500,
+      'Research brief generation',
+      signal,
+    );
+
+    if (!response.content) {
+      mcpLog('warning', `Research brief generation returned no content: ${response.error ?? 'unknown'}`, 'llm');
+      return null;
+    }
+
+    const brief = parseResearchBrief(response.content);
+    if (!brief) {
+      mcpLog('warning', 'Research brief JSON parse or shape validation failed', 'llm');
+      return null;
+    }
+
+    return brief;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    mcpLog('warning', `Research brief generation failed: ${message}`, 'llm');
+    return null;
+  }
+}
+
+export function renderResearchBrief(brief: ResearchBrief): string {
+  const lines: string[] = [];
+
+  lines.push('## Your research brief (goal-tailored)');
+  lines.push('');
+  lines.push(`**Goal class**: \`${brief.goal_class}\` — ${brief.goal_class_reason}`);
+  lines.push(`**Freshness target**: \`${brief.freshness_window}\``);
+  lines.push(`**Reddit branch**: ${brief.fire_reddit_branch ? '**fire**' : 'skip'} — ${brief.fire_reddit_reason}`);
+  lines.push('');
+
+  if (brief.source_priority.length > 0) {
+    lines.push('**Source priority** (highest → lowest):');
+    brief.source_priority.forEach((src, i) => lines.push(`${i + 1}. \`${src}\``));
+    lines.push('');
+  }
+
+  if (brief.sources_to_deprioritize.length > 0) {
+    lines.push(`**Deprioritize**: ${brief.sources_to_deprioritize.map((s) => `\`${s}\``).join(', ')}`);
+    lines.push('');
+  }
+
+  lines.push('### Pass 1 concept groups');
+  lines.push('');
+  lines.push('Issue every query below in ONE `web-search` call (flat array).');
+  lines.push('');
+
+  for (const group of brief.concept_groups) {
+    lines.push(`#### ${group.facet}`);
+    for (const query of group.queries) {
+      lines.push(`- ${query}`);
+    }
+    lines.push('');
+  }
+
+  if (brief.anticipated_gaps.length > 0) {
+    lines.push('### Anticipated gaps (watch the classifier\'s `gaps[]` output for these)');
+    brief.anticipated_gaps.forEach((g) => lines.push(`- ${g}`));
+    lines.push('');
+  }
+
+  if (brief.first_scrape_targets.length > 0) {
+    lines.push('### First-pass scrape targets (prioritize these in `scrape-links`)');
+    brief.first_scrape_targets.forEach((t) => lines.push(`- ${t}`));
+    lines.push('');
+  }
+
+  if (brief.success_criteria.length > 0) {
+    lines.push('### Success criteria (do not declare done until all are verified)');
+    brief.success_criteria.forEach((c) => lines.push(`- ${c}`));
+    lines.push('');
+  }
+
+  lines.push('---');
+  lines.push('');
+  lines.push('Run all concept-group queries above in ONE `web-search` call, then loop per the discipline above.');
+
+  return lines.join('\n');
 }

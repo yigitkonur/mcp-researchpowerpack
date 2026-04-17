@@ -33,3 +33,28 @@ test('appends follow-up searches after signals when suggestions exist', () => {
   assert.match(markdown, /## Suggested follow-up searches/);
   assert.match(markdown, /oauth mcp approval flow/);
 });
+
+test('renders gap-id linkage when refine query carries a gap_id', () => {
+  const markdown = buildSuggestedFollowUpsSection([
+    { query: 'site:docs.anthropic.com claude 4.7 context', rationale: 'confirm window', gap_id: 2 },
+  ]);
+
+  assert.match(markdown, /closes gap \[2\]/);
+});
+
+test('tolerates missing rationale without crashing', () => {
+  const markdown = buildSuggestedFollowUpsSection([
+    { query: 'claude opus 4.7 pricing' },
+  ]);
+
+  assert.match(markdown, /claude opus 4.7 pricing/);
+  assert.doesNotMatch(markdown, /undefined/);
+});
+
+test('renders gap_description fallback when gap_id is absent (raw mode)', () => {
+  const markdown = buildSuggestedFollowUpsSection([
+    { query: 'pnpm hoist-pattern bug', rationale: 'narrow the repro', gap_description: 'no repro case yet' },
+  ]);
+
+  assert.match(markdown, /no repro case yet/);
+});

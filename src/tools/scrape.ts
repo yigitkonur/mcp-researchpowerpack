@@ -193,7 +193,7 @@ async function processItemsWithLlm(
 
     const llmResult = await processContentWithLLM(
       item.content,
-      { enabled: true, extract: enhancedInstruction, max_tokens: tokensPerUrl },
+      { enabled: true, extract: enhancedInstruction, max_tokens: tokensPerUrl, url: item.url },
       llmProcessor,
     );
 
@@ -365,7 +365,7 @@ export function registerScrapeLinksTool(server: MCPServer): void {
       name: 'scrape-links',
       title: 'Scrape Links',
       description:
-        'Scrape up to 100 web pages and run LLM extraction on each. Returns only the data you specify in the extract field — everything else is filtered out.',
+        'Scrape many web pages in parallel and run structured LLM extraction on each (no hard cap). Per-page output: `## Source` (URL + detected page type + date), `## Matches` (verbatim-preserved facts), `## Not found` (explicit gaps the page did not answer — kills hallucination), `## Follow-up signals` (new terms and referenced-but-unscraped URLs that feed the next research loop), optional `## Contradictions` and `## Truncation` footers. Extraction behavior adapts per page type (docs, github-thread, reddit, marketing, cve, paper, announcement, qa, blog, changelog, release-notes). Use the `extract` field to describe the shape of what you want, separated by `|`.',
       schema: scrapeLinksParamsSchema,
       outputSchema: scrapeLinksOutputSchema,
       annotations: {

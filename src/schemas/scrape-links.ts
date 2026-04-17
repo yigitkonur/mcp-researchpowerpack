@@ -17,7 +17,9 @@ export const scrapeLinksParamsSchema = z.object({
   extract: z
     .string()
     .min(1, { message: 'scrape-links: extract cannot be empty' })
-    .describe('What to pull from each page. The LLM reads the scraped content and returns only what you specify. Be specific: "pricing tiers | free tier limits | enterprise contact info" not "pricing".'),
+    .describe(
+      'Semantic extraction instruction. Describe the SHAPE of what you want, separated by `|`. The extractor classifies each page (docs / github-thread / reddit / marketing / cve / paper / announcement / qa / blog / changelog / release-notes) and adjusts emphasis per type: preserves numbers/versions/stacktraces verbatim from docs and CVE pages, quotes Reddit/HN with attribution plus sentiment distribution, flags what the page did NOT answer in a "Not found" section, and surfaces referenced-but-unscraped URLs in a "Follow-up signals" bulletin that feeds the next research loop. Good examples: "root cause | affected versions | fix | workarounds | timeline"; "pricing tiers | rate limits | enterprise contact | free-tier quotas"; "maintainer decisions | accepted fix commits | stacktraces | resolved version".',
+    ),
 }).strict();
 
 export type ScrapeLinksParams = z.infer<typeof scrapeLinksParamsSchema>;
