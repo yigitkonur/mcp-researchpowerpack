@@ -16,6 +16,7 @@ import { ScraperClient } from '../clients/scraper.js';
 import { MarkdownCleaner } from '../services/markdown-cleaner.js';
 import { createLLMProcessor, processContentWithLLM } from '../services/llm-processor.js';
 import { removeMetaTags } from '../utils/markdown-formatter.js';
+import { extractReadableContent } from '../utils/content-extractor.js';
 import { classifyError } from '../utils/errors.js';
 import { pMap } from '../utils/concurrency.js';
 import {
@@ -158,9 +159,14 @@ function processScrapeResults(
     successful++;
     totalCredits += result.credits;
 
+    // Strip HTML chrome (cookie banners, nav, footer, repeated hero blocks)
+    // BEFORE LLM extraction. Same pipeline applies to the raw fallback.
+    // See: docs/code-review/context/02-current-tool-surface.md (E5).
     let content: string;
     try {
-      content = markdownCleaner.processContent(result.content);
+      const readable = extractReadableContent(result.content, result.url);
+      const sourceForCleaner = readable.extracted ? readable.content : result.content;
+      content = markdownCleaner.processContent(sourceForCleaner);
     } catch {
       content = result.content;
     }
@@ -262,14 +268,14 @@ function buildScrapeResponse(
     },
   });
 
+  // No cookie-cutter "Next Steps" with literal `[...]` placeholders. The
+  // server omits the Next Steps block when there are no concrete suggestions
+  // to make. See: docs/code-review/context/07-derailment-evidence.md
+  // ([FOOTER-BAD]) and mcp-revisions/output-shaping/05.
   const formattedContent = formatSuccess({
     title: 'Scraping Complete',
     summary: batchHeader,
     data: contents.join('\n\n---\n\n'),
-    nextSteps: [
-      metrics.successful > 0 ? 'web-search(queries=[...], extract="verify scraped content") or search-reddit(queries=[...]) — cross-check claims' : null,
-      metrics.failed > 0 ? 'scrape-links(urls=[...failed URLs...], extract="...") — retry the failed URLs' : null,
-    ].filter(Boolean) as string[],
     metadata: {
       'Execution time': formatDuration(executionTime),
       'Token budget': TOKEN_BUDGETS.SCRAPER.toLocaleString(),

@@ -21,6 +21,12 @@ export const webSearchParamsSchema = z.object({
     .boolean()
     .default(false)
     .describe('Skip LLM classification and return the raw ranked URL list. Use when you need unprocessed results.'),
+  verbose: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Include the per-row scoring/coverage metadata, the trailing Signals block, and the CONSENSUS labels even when they carry little signal (single-query hits, threshold of 1). Default false — most agents do not need this and it costs ~1.5KB per call on a typical 3-query fan-out.',
+    ),
 }).strict();
 
 export type WebSearchParams = z.infer<typeof webSearchParamsSchema>;

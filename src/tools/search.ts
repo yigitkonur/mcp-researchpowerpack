@@ -77,11 +77,13 @@ function buildRawOutput(
   queries: string[],
   aggregation: SearchAggregation,
   searches: SearchResponse['searches'],
+  verbose: boolean = false,
 ): string {
   return generateUnifiedOutput(
     aggregation.rankedUrls, queries, searches,
     aggregation.totalUniqueUrls,
     aggregation.frequencyThreshold, aggregation.thresholdNote,
+    verbose,
   );
 }
 
@@ -140,8 +142,13 @@ export function appendSignalsAndFollowUps(
   markdown: string,
   signalsSection: string,
   refineQueries: RefineQuerySuggestion[] | undefined,
+  options: { includeSignals?: boolean } = {},
 ): string {
-  const sections = [markdown, '', '---', signalsSection];
+  const includeSignals = options.includeSignals ?? false;
+  const sections = [markdown];
+  if (includeSignals && signalsSection) {
+    sections.push('', '---', signalsSection);
+  }
   const followUps = buildSuggestedFollowUpsSection(refineQueries);
   if (followUps) {
     sections.push('', followUps);
@@ -157,6 +164,7 @@ function buildClassifiedOutput(
   extract: string,
   searches: SearchResponse['searches'],
   totalQueries: number,
+  verbose: boolean = false,
 ): string {
   const rankedUrls = aggregation.rankedUrls;
 
@@ -243,7 +251,12 @@ function buildClassifiedOutput(
     lines.push('');
   }
 
-  lines.push(buildSignalsSection(aggregation, searches, totalQueries));
+  // Signals block is gated behind verbose — it duplicates info already
+  // present in the per-row metadata for callers who care.
+  // See: docs/code-review/context/05-output-formatting-patterns.md.
+  if (verbose) {
+    lines.push(buildSignalsSection(aggregation, searches, totalQueries));
+  }
 
   // Gaps section — what the current results don't answer
   if (classification.gaps && classification.gaps.length > 0) {
@@ -373,9 +386,10 @@ export async function handleWebSearch(
         rawRefineQueries = refineResult.result;
       }
       markdown = appendSignalsAndFollowUps(
-        buildRawOutput(params.queries, aggregation, response.searches),
+        buildRawOutput(params.queries, aggregation, response.searches, params.verbose),
         buildSignalsSection(aggregation, response.searches, response.totalQueries),
         rawRefineQueries,
+        { includeSignals: params.verbose },
       );
       await reporter.progress(80, 100, 'Ranking search results');
     } else {
@@ -391,7 +405,7 @@ export async function handleWebSearch(
 
       if (classification.result) {
         markdown = buildClassifiedOutput(
-          classification.result, aggregation, params.extract, response.searches, response.totalQueries,
+          classification.result, aggregation, params.extract, response.searches, response.totalQueries, params.verbose,
         );
         llmClassified = true;
         await reporter.progress(85, 100, 'Formatted classified results');
@@ -400,9 +414,10 @@ export async function handleWebSearch(
         llmError = classification.error ?? 'Unknown classification error';
         mcpLog('warning', `Classification failed, falling back to raw: ${llmError}`, 'search');
         markdown = appendSignalsAndFollowUps(
-          buildRawOutput(params.queries, aggregation, response.searches),
+          buildRawOutput(params.queries, aggregation, response.searches, params.verbose),
           buildSignalsSection(aggregation, response.searches, response.totalQueries),
           undefined,
+          { includeSignals: params.verbose },
         );
         await reporter.progress(85, 100, 'Classification failed, using raw output');
       }

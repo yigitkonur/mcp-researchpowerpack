@@ -10,6 +10,7 @@ import { getWorkflowStateStore } from '../services/workflow-state.js';
 import {
   createLLMProcessor,
   generateResearchBrief,
+  getLLMHealth,
   renderResearchBrief,
 } from '../services/llm-processor.js';
 import { buildWorkflowKey } from '../utils/workflow-key.js';
@@ -88,6 +89,38 @@ export function buildStaticScaffolding(goal?: string): string {
 }
 
 /**
+ * Compact ~300-token stub for the LLM-planner-offline case. Names the loop,
+ * the Reddit branch rule, and the cite-from-scrape discipline — enough to
+ * keep an agent moving without the full ~1100-token playbook. Pass
+ * `include_playbook: true` to get the full scaffolding even when degraded.
+ *
+ * See: docs/code-review/context/02-current-tool-surface.md (E1) for the
+ * 4426-char baseline this replaces, and mcp-revisions/output-shaping/04.
+ */
+export function buildDegradedStub(goal?: string): string {
+  const focusLine = goal
+    ? `> Focus for this session: ${goal}`
+    : '> Focus: not specified — set one on the next pass.';
+  return [
+    '# Research session started (LLM planner offline — compact stub)',
+    '',
+    focusLine,
+    '',
+    'Loop: **search → scrape → verify → stop.** Fire concept groups in parallel via `web-search` (one call, flat array). Cite every non-trivial claim from a `scrape-links` excerpt — never from a search snippet alone.',
+    '',
+    'Reddit branch: only for sentiment / migration stories / lived experience. Skip for CVE, API specs, pricing pages.',
+    '',
+    'Worked example — "alternatives to LiteLLM for proxy use":',
+    '→ `web-search` queries: ["litellm alternatives proxy 2026", "openrouter vs portkey", "llm gateway comparison"]',
+    '→ `scrape-links` on the top 3-5 comparison articles',
+    '→ `web-search` again with reddit-shaped queries for practitioner stories',
+    '→ `get-reddit-post` on the 3-10 strongest threads',
+    '',
+    'Pass `include_playbook: true` to `start-research` for the full ~1100-token tactic reference.',
+  ].join('\n');
+}
+
+/**
  * Backward-compat alias — older tests import `buildOrientation` directly.
  * New code should use `buildStaticScaffolding` (sync) for the static part,
  * and the full `handleStartResearch` handler for the goal-aware version.
@@ -126,6 +159,20 @@ async function handleStartResearch(
       bootstrapped: true,
       bootstrappedAt: new Date().toISOString(),
     });
+
+    // When the LLM planner is offline AND the caller did not opt-in to the
+    // full playbook, emit the compact degraded stub. Saves ~800 tokens per
+    // session-boot in the steady state.
+    // See: docs/code-review/context/03-llm-degradation-paths.md
+    //      mcp-revisions/output-shaping/04.
+    const llmHealth = getLLMHealth();
+    const plannerKnownOffline = !llmHealth.plannerConfigured
+      || (llmHealth.lastPlannerCheckedAt !== null && !llmHealth.lastPlannerOk);
+
+    if (plannerKnownOffline && !params.include_playbook) {
+      const stub = buildDegradedStub(params.goal);
+      return toolSuccess(stub, { content: stub });
+    }
 
     const scaffolding = buildStaticScaffolding(params.goal);
 

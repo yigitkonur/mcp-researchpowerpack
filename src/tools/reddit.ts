@@ -297,15 +297,13 @@ function formatRedditOutput(
     data += `\nCall get-reddit-post(urls=[...skipped URLs above...]) with just the skipped URLs.`;
   }
 
+  // No cookie-cutter "Next Steps" with literal `[...]` placeholders here
+  // either. See: docs/code-review/context/07-derailment-evidence.md
+  // ([FOOTER-BAD]) and mcp-revisions/output-shaping/05.
   return formatSuccess({
     title: `Reddit Posts Fetched (${processResult.successful}/${urls.length})`,
     summary: batchHeader + extraStatus,
     data,
-    nextSteps: [
-      processResult.successful > 0 ? 'web-search(queries=[...], extract="verify claims from Reddit") — cross-check Reddit findings' : null,
-      processResult.successful > 0 ? 'scrape-links(urls=[...URLs from comments...], extract="...") — scrape URLs referenced in comments' : null,
-      processResult.failed > 0 ? 'Retry failed URLs individually' : null,
-    ].filter(Boolean) as string[],
   });
 }
 

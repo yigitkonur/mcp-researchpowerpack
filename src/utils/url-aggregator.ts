@@ -250,6 +250,7 @@ export function generateUnifiedOutput(
   totalUniqueUrls: number,
   frequencyThreshold: number,
   thresholdNote?: string,
+  verbose: boolean = false,
 ): string {
   const lines: string[] = [];
   const consensusCount = rankedUrls.filter(u => u.isConsensus).length;
@@ -262,19 +263,46 @@ export function generateUnifiedOutput(
     lines.push('');
   }
 
-  // Ranked URL list — every URL exactly once
+  // Ranked URL list — every URL exactly once.
+  //
+  // Per-row metadata is gated:
+  // - CONSENSUS labels only appear when the effective threshold is >1 (a
+  //   threshold of 1 means *every* row gets the label, so it carries no
+  //   signal). See: docs/code-review/context/02-current-tool-surface.md.
+  // - The Score/Seen/Consistency line is suppressed for rows that were
+  //   seen in exactly one query in a multi-query call (Seen=1/N is common
+  //   and Consistency is always "n/a" in that case).
+  // - Verbose mode restores both for callers that explicitly want them.
+  const consensusActive = frequencyThreshold > 1;
+
   for (const url of rankedUrls) {
-    const consensusTag = url.frequency >= HIGH_CONSENSUS_THRESHOLD
+    const consensusTag = consensusActive && url.frequency >= HIGH_CONSENSUS_THRESHOLD
       ? ' CONSENSUS+++'
-      : url.isConsensus
+      : consensusActive && url.isConsensus
         ? ' CONSENSUS'
         : '';
     const coveragePct = Math.round(url.coverageRatio * 100);
     const consistency = consistencyLabel(url.positionStdDev, url.frequency);
 
     lines.push(`**${url.rank}. [${url.title}](${url.url})**${consensusTag}`);
-    lines.push(`Score: ${url.score.toFixed(1)} | Seen in: ${url.frequency}/${allQueries.length} queries (${coveragePct}%) | Best pos: #${url.bestPosition} | Consistency: ${consistency}`);
-    lines.push(`Queries: ${url.queries.map(q => `"${q}"`).join(', ')}`);
+
+    const showRowMetadata = verbose
+      || (allQueries.length > 1 && url.frequency > 1)
+      || allQueries.length === 1;
+    if (showRowMetadata) {
+      const parts = [
+        `Score: ${url.score.toFixed(1)}`,
+        `Seen in: ${url.frequency}/${allQueries.length} queries (${coveragePct}%)`,
+        `Best pos: #${url.bestPosition}`,
+      ];
+      if (url.frequency > 1) {
+        parts.push(`Consistency: ${consistency}`);
+      }
+      lines.push(parts.join(' | '));
+    }
+    if (url.queries.length > 1 || verbose) {
+      lines.push(`Queries: ${url.queries.map(q => `"${q}"`).join(', ')}`);
+    }
     lines.push(`> ${url.snippet}`);
 
     // Alt snippets (if multiple distinct snippets were collected)

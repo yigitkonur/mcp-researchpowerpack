@@ -21,17 +21,29 @@ test('omits the section when there are no refine queries', () => {
   assert.equal(buildSuggestedFollowUpsSection([]), '');
 });
 
-test('appends follow-up searches after signals when suggestions exist', () => {
+test('appends follow-up searches after signals when suggestions exist (verbose)', () => {
+  // Signals are now gated behind verbose mode — see mcp-revisions/output-shaping/02.
   const markdown = appendSignalsAndFollowUps(
     '## Results',
     '**Signals**\n- Coverage: 4/4 queries returned ≥3 results',
     [{ query: 'oauth mcp approval flow', rationale: 'inspect approval edge cases' }],
+    { includeSignals: true },
   );
 
   assert.match(markdown, /## Results/);
   assert.match(markdown, /\*\*Signals\*\*/);
   assert.match(markdown, /## Suggested follow-up searches/);
   assert.match(markdown, /oauth mcp approval flow/);
+});
+
+test('omits Signals section by default (non-verbose)', () => {
+  const markdown = appendSignalsAndFollowUps(
+    '## Results',
+    '**Signals**\n- Coverage: 4/4 queries returned ≥3 results',
+    [{ query: 'oauth mcp approval flow', rationale: 'inspect approval edge cases' }],
+  );
+  assert.match(markdown, /## Suggested follow-up searches/);
+  assert.doesNotMatch(markdown, /\*\*Signals\*\*/);
 });
 
 test('renders gap-id linkage when refine query carries a gap_id', () => {

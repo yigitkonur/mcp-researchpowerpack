@@ -471,15 +471,33 @@ async function main(): Promise<void> {
     assert.equal(blockedJson.result?.isError, true);
     assert.match(JSON.stringify(blockedJson.result), /start-research/);
 
+    // Default mode (no LLM_API_KEY in test env) → degraded compact stub.
     const startedJson = await callTool(baseUrl, sessionId, 'start-research', {}, 7);
     assert.notEqual(startedJson.result?.isError, true);
     assert.equal(typeof startedJson.result?.structuredContent?.content, 'string');
     assert.match(JSON.stringify(startedJson.result), /Research session started/);
-    assert.match(JSON.stringify(startedJson.result), /Concept groups/);
-    assert.match(JSON.stringify(startedJson.result), /research loop/i);
     assert.match(JSON.stringify(startedJson.result), /scrape-links/);
-    assert.match(JSON.stringify(startedJson.result), /semantic instruction|semantic/);
-    assert.match(JSON.stringify(startedJson.result), /Reddit branch/);
+    // Degraded stub explicitly mentions the planner-offline state and the loop.
+    assert.match(JSON.stringify(startedJson.result), /LLM planner offline|compact stub/);
+    assert.match(JSON.stringify(startedJson.result), /search → scrape → verify → stop/);
+    // Stub should be dramatically smaller than the full playbook.
+    const stubBytes = JSON.stringify(startedJson.result?.structuredContent ?? {}).length;
+    assert.ok(stubBytes < 2500, `expected degraded stub <2500 bytes, got ${stubBytes}`);
+
+    // Opting into the full playbook via include_playbook=true restores the
+    // verbose tactic reference (concept groups, research loop, Reddit branch).
+    const playbookJson = await callTool(
+      baseUrl,
+      sessionId,
+      'start-research',
+      { include_playbook: true },
+      71,
+    );
+    assert.notEqual(playbookJson.result?.isError, true);
+    assert.match(JSON.stringify(playbookJson.result), /Concept groups/);
+    assert.match(JSON.stringify(playbookJson.result), /research loop/i);
+    assert.match(JSON.stringify(playbookJson.result), /Reddit branch/);
+    assert.match(JSON.stringify(playbookJson.result), /semantic instruction|semantic/);
 
     const redditBlocked = await callTool(
       baseUrl,
