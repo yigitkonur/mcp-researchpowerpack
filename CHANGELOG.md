@@ -8,11 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The live server runs at https://research.yigitkonur.com/mcp — every push to
 `main` deploys automatically.
 
-## [4.3.0] - 2026-04-18
+## [5.0.0] - 2026-04-18
 
-The "tighten the contract, sharpen the tools, surface the skill" release.
+**The major rename + contraction release.** This is one of those rare semver
+majors where everything you depend on at the wire level keeps working: the
+MCP URL is unchanged, the four surviving tools accept their old inputs, the
+old `npx` bin names still resolve. What changed is the **shape of the surface**
+— one tool is gone, one tool grew two new parameters, contracts that were
+silently wrong are now loud, and the package + GitHub repo got a shorter name.
+
 **Tool count drops from 5 → 4. Token cost per call drops 30–60% on most paths.**
-Pair the server with the [`run-research`](https://github.com/yigitkonur/skills-by-yigitkonur/tree/main/skills/run-research) skill for the full agentic playbook.
+Pair the server with the [`run-research`](https://github.com/yigitkonur/skills-by-yigitkonur/tree/main/skills/run-research)
+skill for the full agentic playbook.
+
+### Why a major bump
+
+- **Removed a tool.** `search-reddit` is gone. Code that called it by name will
+  see `tools/list` return four entries instead of five and the call will fail.
+- **Changed an `isError` contract.** `get-reddit-post` and `scrape-links` now
+  flip `isError: true` on whole-batch failure where they used to return
+  `isError: false` with a sad body. Callers that gated on `isError` to detect
+  failure will see the new behavior immediately.
+- **Renamed the npm package.** `mcp-researchpowerpack-http` → `mcp-researchpowerpack`.
+  Existing installs keep working (the old package is frozen at 4.2.5; bin
+  aliases are kept on the new package), but `package.json` references and
+  registry URLs change.
+
+If you only consume the live server at `research.yigitkonur.com/mcp` from an
+LLM client, you do not need to do anything except possibly update one tool
+name in your prompts (`search-reddit` → `web-search` with `scope: "reddit"`).
 
 ### Renamed
 
@@ -62,12 +86,19 @@ Pair the server with the [`run-research`](https://github.com/yigitkonur/skills-b
 - **If you were passing Reddit URLs to `scrape-links`**, you'll now get an `UNSUPPORTED_URL_TYPE` error. Switch those calls to `get-reddit-post`.
 - **If you embed the package**, re-install with `npm i mcp-researchpowerpack`. The CLI bin names (`mcp-researchpowerpack-http`, `mcp-research-powerpack-http`) are kept as back-compat aliases.
 
+## [4.3.0] - 2026-04-18
+
+Transitional release that landed the rename only — `mcp-researchpowerpack-http`
+→ `mcp-researchpowerpack`. Functionally identical to 5.0.0 above; published
+to npm and immediately superseded by 5.0.0 to mark the breaking nature of
+the underlying changes (search-reddit removed, isError contract flipped).
+Use 5.0.0.
+
 ## [4.2.1] – [4.2.5] - 2026-04-15 to 2026-04-17
 
-CI auto-bumped releases between 4.2.0 and 4.3.0. Last release of the
-`mcp-researchpowerpack-http` npm name; functionally identical to 4.3.0
-above except for the rename. Subsequent versions ship as
-**mcp-researchpowerpack** (no `-http` suffix).
+CI auto-bumped releases under the old `mcp-researchpowerpack-http` npm name.
+Final tag of that package — frozen at 4.2.5, no further updates. Switch to
+`mcp-researchpowerpack` 5.0.0+.
 
 ## [4.2.0] - 2026-04-15
 

@@ -1,6 +1,6 @@
 {
   "name": "mcp-researchpowerpack",
-  "version": "4.3.0",
+  "version": "5.0.0",
   "description": "HTTP-first MCP research server: web-search (with Reddit scope), scrape-links (chrome-stripped), get-reddit-post — built on mcp-use, deployed at research.yigitkonur.com/mcp.",
   "type": "module",
   "main": "dist/index.js",
