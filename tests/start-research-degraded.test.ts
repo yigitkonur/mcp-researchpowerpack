@@ -29,3 +29,13 @@ test('degraded stub uses focus line when goal is provided', () => {
   const stub = buildDegradedStub('investigate auth flows');
   assert.match(stub, /Focus for this session: investigate auth flows/);
 });
+
+test('both stub and full playbook surface the run-research skill install hint', () => {
+  const stub = buildDegradedStub();
+  const playbook = buildStaticScaffolding();
+  for (const out of [stub, playbook]) {
+    assert.match(out, /run-research/, 'expected skill name in install hint');
+    assert.match(out, /npx -y skills add/);
+    assert.match(out, /yigitkonur\/skills-by-yigitkonur\/skills\/run-research/);
+  }
+});

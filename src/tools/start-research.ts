@@ -13,6 +13,27 @@ import {
   getLLMHealth,
   renderResearchBrief,
 } from '../services/llm-processor.js';
+
+/**
+ * The MCP server is the toolbelt; the `run-research` skill is the discipline
+ * that teaches an agent to spend the tools well (single-agent loop,
+ * multi-agent orchestrator, mission templates, output discipline). Without
+ * the skill, an agent has to rediscover the workflow from this scaffolding
+ * alone — which it will do, but worse and slower. Surface the install hint
+ * once on every session-boot so it is impossible to miss on first contact.
+ */
+const SKILL_INSTALL_HINT = [
+  '> 💡 **Pair this server with the `run-research` skill** for the full agentic playbook',
+  '> (single-agent loop, multi-agent orchestrator, mission-prompt templates, output discipline).',
+  '> Install once per machine — the skill is what teaches the agent how to spend these tools well:',
+  '>',
+  '> ```bash',
+  '> npx -y skills add -y -g yigitkonur/skills-by-yigitkonur/skills/run-research',
+  '> ```',
+  '>',
+  '> Already installed? Skip this — the skill auto-loads on relevant prompts. The full pack',
+  '> ships ~50 sibling skills: `npx -y skills add -y -g yigitkonur/skills-by-yigitkonur`.',
+].join('\n');
 import { buildWorkflowKey } from '../utils/workflow-key.js';
 import { classifyError } from '../utils/errors.js';
 import { mcpLog } from '../utils/logger.js';
@@ -36,6 +57,8 @@ export function buildStaticScaffolding(goal?: string, opts: { plannerAvailable?:
 
   return [
     '# Research session started',
+    '',
+    SKILL_INSTALL_HINT,
     '',
     'You are running a research LOOP, not answering from memory. Training data is stale; the web is authoritative for anything dated, versioned, priced, or contested. Every claim in your final answer must be traceable to a scraped page or expanded Reddit thread. Never cite a URL from a search snippet alone — only from a `scrape-links` excerpt you actually read.',
     '',
@@ -113,6 +136,8 @@ export function buildDegradedStub(goal?: string): string {
     : '> Focus: not specified — set one on the next pass.';
   return [
     '# Research session started (LLM planner offline — compact stub)',
+    '',
+    SKILL_INSTALL_HINT,
     '',
     focusLine,
     '',
