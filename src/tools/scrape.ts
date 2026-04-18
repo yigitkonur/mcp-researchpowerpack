@@ -306,7 +306,7 @@ export async function handleScrapeLinks(
   if (validUrls.length === 0) {
     return createScrapeErrorResponse('INVALID_URLS', `All ${params.urls.length} URLs are invalid`, startTime, params.urls.length, false, [
       'web-search(queries=["topic documentation", "topic guide"], extract="relevant documentation and guides") — search for valid URLs first, then scrape the results',
-      'search-reddit(queries=["topic recommendations"]) — find discussion URLs to scrape instead',
+      'web-search(queries=["topic recommendations"], extract="...", scope: "reddit") — find Reddit discussion permalinks to feed get-reddit-post instead',
     ]);
   }
 
@@ -323,7 +323,7 @@ export async function handleScrapeLinks(
     const err = classifyError(error);
     return createScrapeErrorResponse('CLIENT_INIT_FAILED', `Failed to initialize scraper: ${err.message}`, startTime, params.urls.length, false, [
       'web-search(queries=["topic key findings", "topic summary", "topic overview"], extract="key findings and summary") — search for information instead of scraping',
-      'search-reddit(queries=["topic discussion", "topic recommendations"]) — get community insights as an alternative',
+      'web-search(queries=["topic discussion", "topic recommendations"], extract="...", scope: "reddit") — get community insights as an alternative',
     ]);
   }
 

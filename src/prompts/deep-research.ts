@@ -23,7 +23,7 @@ export function registerDeepResearchPrompt(server: MCPServer): void {
         '2. **Fire ONE `web-search` call** with every query from every concept group concatenated into the flat `queries` array. Set `extract` to a specific description of what "relevant" means for this goal (not just a keyword).',
         '3. **Read the classifier output**: `synthesis` (grounded in `[rank]` citations), `gaps` (what is missing — each with an id), `refine_queries` (follow-ups linked to gap ids). If confidence is `low`, trust the `gaps` list more than the synthesis.',
         '4. **Scrape with `scrape-links`** — every HIGHLY_RELEVANT plus the 2–3 best MAYBE_RELEVANT, batched in one call. Write `extract` as facets separated by `|` (e.g. `root cause | affected versions | fix | workarounds`). Each page returns a structured extract with `## Matches`, `## Not found` (admitted gaps), and `## Follow-up signals` (new terms + referenced-but-unscraped URLs that should seed the next search pass).',
-        '5. **Reddit branch** — only if the brief says `fire_reddit_branch: true`. Use `search-reddit` then `get-reddit-post` on the 3–10 strongest threads. Never cite a Reddit thread you have not expanded.',
+        '5. **Reddit branch** — only if the brief says `fire_reddit_branch: true`. Call `web-search` again with `scope: "reddit"` for post-permalink discovery, then `get-reddit-post` on the 3–10 strongest threads. Never cite a Reddit thread you have not expanded.',
         '6. **Loop**: build new concept groups for the unclosed gaps, fire another `web-search`, scrape, read. Stop when every gap is closed AND no new terms appear, OR after 4 passes — whichever comes first.',
         '',
         '## Output discipline',

@@ -16,6 +16,9 @@ test('blocks the first reddit keyword hit and marks the warning as shown', async
 
   const result = await redditKeywordGuard(makeCtx(), ['reddit mcp oauth'], store);
   assert.equal(result?.isError, true);
+  // Guidance now points to web-search scope:"reddit" (search-reddit was deleted).
+  assert.match(JSON.stringify(result), /scope/);
+  assert.match(JSON.stringify(result), /reddit/);
 
   const state = await store.get('session:session-1');
   assert.equal(state.redditWarningShown, true);

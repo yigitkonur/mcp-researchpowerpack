@@ -111,7 +111,7 @@ export function getCapabilities(): Capabilities {
 export function getMissingEnvMessage(capability: keyof Capabilities): string {
   const messages: Record<keyof Capabilities, string> = {
     reddit: '❌ **Reddit tools unavailable.** Set `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` to enable `get-reddit-post`.\n\n👉 Create a Reddit app at: https://www.reddit.com/prefs/apps (select "script" type)',
-    search: '❌ **Search unavailable.** Set `SERPER_API_KEY` to enable `web-search` and `search-reddit`.\n\n👉 Get your free API key at: https://serper.dev (2,500 free queries)',
+    search: '❌ **Search unavailable.** Set `SERPER_API_KEY` to enable `web-search` (including `scope: "reddit"`).\n\n👉 Get your free API key at: https://serper.dev (2,500 free queries)',
     scraping: '❌ **Web scraping unavailable.** Set `SCRAPEDO_API_KEY` to enable `scrape-links`.\n\n👉 Sign up at: https://scrape.do (1,000 free credits)',
     llmExtraction: '⚠️ **AI extraction disabled.** Set `LLM_API_KEY` to enable AI-powered content extraction and search classification.\n\nScraping will work but without intelligent content filtering.',
   };

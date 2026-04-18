@@ -21,6 +21,12 @@ export const webSearchParamsSchema = z.object({
     .boolean()
     .default(false)
     .describe('Skip LLM classification and return the raw ranked URL list. Use when you need unprocessed results.'),
+  scope: z
+    .enum(['web', 'reddit', 'both'])
+    .default('web')
+    .describe(
+      'Search scope. "web" (default) = open web, no augmentation. "reddit" = server appends `site:reddit.com` to every query and filters results to post permalinks (`/r/.+/comments/[a-z0-9]+/`); subreddit homepages are dropped. "both" = runs every query twice (open web + reddit-scoped), merges the result set, and tags each row with its source. Use "reddit" for sentiment/migration/lived-experience research; use "both" when you want one call to cover both branches.',
+    ),
   verbose: z
     .boolean()
     .default(false)

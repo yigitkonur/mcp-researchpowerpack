@@ -13,6 +13,8 @@ function search(query: string, urls: Array<{ link: string; title: string; positi
       snippet: u.snippet ?? `snippet for ${u.title}`,
       position: u.position,
     })),
+    totalResults: urls.length,
+    related: [],
   };
 }
 

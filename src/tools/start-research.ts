@@ -72,7 +72,7 @@ export function buildStaticScaffolding(goal?: string): string {
     '',
     '**Do NOT fire Reddit for**: CVE lookups, API spec questions, pricing pages, primary-source documentation hunts. Reddit adds noise on these.',
     '',
-    'When firing: `search-reddit` → then `get-reddit-post` on the 3–10 strongest threads. Never cite a Reddit thread you have not expanded with `get-reddit-post`.',
+    'When firing: call `web-search` with `scope: "reddit"` (server filters to post permalinks; no client-side regex needed) → then `get-reddit-post` on the 3–10 strongest threads. Never cite a Reddit thread you have not expanded with `get-reddit-post`.',
     '',
     '## Post-cutoff entity discipline',
     '',

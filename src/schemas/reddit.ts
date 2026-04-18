@@ -1,35 +1,8 @@
 import { z } from 'zod';
 
-// ============================================================================
-// search-reddit
-// ============================================================================
-
-export const searchRedditParamsSchema = z.object({
-  queries: z
-    .array(
-      z.string()
-        .min(1, { message: 'search-reddit: Query cannot be empty' })
-        .describe('A Reddit search query. "site:reddit.com" is appended automatically.'),
-    )
-    .min(1, { message: 'search-reddit: At least 1 query required' })
-    .describe('Search queries for Reddit. Each query is automatically scoped to reddit.com via Google. Returns deduplicated Reddit post URLs.'),
-}).strict();
-
-export type SearchRedditParams = z.infer<typeof searchRedditParamsSchema>;
-
-export const searchRedditOutputSchema = z.object({
-  content: z
-    .string()
-    .describe('Newline-separated list of unique Reddit URLs.'),
-  metadata: z.object({
-    total_items: z.number().int().nonnegative().describe('Number of queries executed.'),
-    successful: z.number().int().nonnegative().describe('Queries that returned results.'),
-    failed: z.number().int().nonnegative().describe('Queries that failed.'),
-    execution_time_ms: z.number().int().nonnegative().describe('Wall clock time in milliseconds.'),
-  }).strict(),
-}).strict();
-
-export type SearchRedditOutput = z.infer<typeof searchRedditOutputSchema>;
+// Note: search-reddit was deleted in mcp-revisions/tool-surface/01.
+// Reddit discovery now flows through `web-search` with `scope: "reddit"`.
+// See src/schemas/web-search.ts for the scope param.
 
 // ============================================================================
 // get-reddit-post

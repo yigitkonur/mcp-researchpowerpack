@@ -7,7 +7,6 @@ const TEST_PROTOCOL_VERSION = '2025-11-25' as const;
 const TOOL_NAMES = [
   'start-research',
   'web-search',
-  'search-reddit',
   'get-reddit-post',
   'scrape-links',
 ] as const;
@@ -344,8 +343,8 @@ async function main(): Promise<void> {
       },
       sessionId,
     ));
-    assert.match(JSON.stringify(redditSentimentPromptJson.result), /search-reddit/);
     assert.match(JSON.stringify(redditSentimentPromptJson.result), /get-reddit-post/);
+    assert.match(JSON.stringify(redditSentimentPromptJson.result), /scope:\s*\\?"reddit\\?"/);
 
     // --- Compliance: annotations + outputSchema ---
     const expectedAnnotationKeys = [
@@ -499,6 +498,7 @@ async function main(): Promise<void> {
     assert.match(JSON.stringify(playbookJson.result), /Reddit branch/);
     assert.match(JSON.stringify(playbookJson.result), /semantic instruction|semantic/);
 
+    // The reddit-keyword guard fires for scope=web — agent should use scope:"reddit" instead.
     const redditBlocked = await callTool(
       baseUrl,
       sessionId,
@@ -507,7 +507,24 @@ async function main(): Promise<void> {
       8,
     );
     assert.equal(redditBlocked.result?.isError, true);
-    assert.match(JSON.stringify(redditBlocked.result), /search-reddit|Reddit/);
+    assert.match(JSON.stringify(redditBlocked.result), /scope:\s*\\?"reddit\\?"/);
+
+    // The same query with scope="reddit" passes the guard (intentional Reddit scope).
+    const redditScoped = await callTool(
+      baseUrl,
+      sessionId,
+      'web-search',
+      { queries: ['typescript oauth tips'], extract: 'community advice', scope: 'reddit' },
+      9,
+    );
+    // Will likely error at the upstream search call (test env has no real
+    // SERPER backend) OR succeed with empty results — but it should NOT be
+    // blocked by the guard.
+    assert.doesNotMatch(
+      JSON.stringify(redditScoped.result ?? {}),
+      /Blocked query|wastes a turn/,
+      'expected scope:"reddit" call to bypass the keyword guard',
+    );
 
     // --- Schema rejection tests ---
     // web-search: requires queries + extract
@@ -518,12 +535,6 @@ async function main(): Promise<void> {
     assertToolInputRejected(
       await callTool(baseUrl, sessionId, 'web-search', { queries: ['test'] }, 10),
       'web-search missing extract',
-    );
-
-    // search-reddit: requires queries
-    assertToolInputRejected(
-      await callTool(baseUrl, sessionId, 'search-reddit', { queries: [] }, 11),
-      'search-reddit empty queries',
     );
 
     // get-reddit-post: requires urls only

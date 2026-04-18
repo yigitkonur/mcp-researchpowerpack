@@ -1,19 +1,22 @@
 /**
- * Reddit Tools - Search and Fetch
- * NEVER throws - always returns structured response for graceful degradation
+ * Reddit Tools — get-reddit-post
+ *
+ * NEVER throws - always returns structured response for graceful degradation.
+ *
+ * Note: search-reddit was deleted in mcp-revisions/tool-surface/01. Reddit
+ * discovery now flows through `web-search` with `scope: "reddit"`. See
+ * mcp-revisions/tool-surface/04 for the rationale on keeping
+ * get-reddit-post separate (Reddit threads have a structurally different
+ * response shape than HTML pages).
  */
 
 import type { MCPServer } from 'mcp-use/server';
 
 import {
-  searchRedditParamsSchema,
-  searchRedditOutputSchema,
   getRedditPostParamsSchema,
   getRedditPostOutputSchema,
-  type SearchRedditOutput,
   type GetRedditPostOutput,
 } from '../schemas/reddit.js';
-import { SearchClient } from '../clients/search.js';
 import { RedditClient, type PostResult, type Comment } from '../clients/reddit.js';
 import { REDDIT, getCapabilities, getMissingEnvMessage, parseEnv } from '../config/index.js';
 import { classifyError } from '../utils/errors.js';
@@ -117,68 +120,6 @@ function formatPost(result: PostResult, fetchComments: boolean, maxWords: number
 }
 
 // ============================================================================
-// Search Reddit Handler (simplified — returns flat URL list)
-// ============================================================================
-
-export async function handleSearchReddit(
-  queries: string[],
-  apiKey: string,
-  reporter: ToolReporter = NOOP_REPORTER,
-): Promise<ToolExecutionResult<SearchRedditOutput>> {
-  try {
-    const startTime = Date.now();
-    const client = new SearchClient(apiKey);
-    await reporter.log('info', `Searching Reddit with ${queries.length} queries`);
-    await reporter.progress(15, 100, 'Searching Reddit');
-    const results = await client.searchRedditMultiple(queries);
-
-    // Collect all unique URLs
-    const allUrls = new Set<string>();
-    for (const resultSet of results.values()) {
-      for (const result of resultSet) {
-        if (result.url) allUrls.add(result.url);
-      }
-    }
-
-    if (allUrls.size === 0) {
-      return toolFailure(formatError({
-        code: 'NO_RESULTS',
-        message: `No Reddit URLs found for any of the ${queries.length} queries`,
-        toolName: 'search-reddit',
-        howToFix: ['Try broader or simpler search terms', 'Check spelling'],
-        alternatives: ['web-search(queries=["topic reddit discussion"], extract="...") — broader Google search'],
-      }));
-    }
-
-    const urlList = [...allUrls];
-    const content = urlList.join('\n');
-
-    await reporter.log('info', `Found ${urlList.length} unique Reddit URLs across ${queries.length} queries`);
-    await reporter.progress(100, 100, 'Reddit search complete');
-
-    const executionTime = Date.now() - startTime;
-    return toolSuccess(content, {
-      content,
-      metadata: {
-        total_items: queries.length,
-        successful: urlList.length,
-        failed: 0,
-        execution_time_ms: executionTime,
-      },
-    });
-  } catch (error) {
-    const structuredError = classifyError(error);
-    return toolFailure(formatError({
-      code: structuredError.code,
-      message: structuredError.message,
-      retryable: structuredError.retryable,
-      toolName: 'search-reddit',
-      howToFix: ['Verify SERPER_API_KEY is set correctly'],
-    }));
-  }
-}
-
-// ============================================================================
 // Get Reddit Posts Handler
 // ============================================================================
 
@@ -206,7 +147,7 @@ function validatePostCount(urlCount: number): string | null {
       toolName: 'get-reddit-post',
       howToFix: [`Add at least ${REDDIT.MIN_POSTS - urlCount} more Reddit URL(s)`],
       alternatives: [
-        `search-reddit(queries=["topic discussion", "topic recommendations", "topic experiences"]) — find more Reddit posts first, then call get-reddit-post with ${REDDIT.MIN_POSTS}+ URLs`,
+        `web-search(queries=["topic discussion", "topic recommendations"], extract="...", scope: "reddit") — find more Reddit post permalinks first, then call get-reddit-post with ${REDDIT.MIN_POSTS}+ URLs`,
       ],
     });
   }
@@ -374,42 +315,6 @@ export async function handleGetRedditPosts(
   } catch (error) {
     return toolFailure(formatGetRedditPostsError(error));
   }
-}
-
-export function registerSearchRedditTool(server: MCPServer): void {
-  server.tool(
-    {
-      name: 'search-reddit',
-      title: 'Search Reddit',
-      description:
-        'Search Google for Reddit posts matching up to 100 queries. Returns a flat list of unique Reddit URLs ready to pipe into get-reddit-post.',
-      schema: searchRedditParamsSchema,
-      outputSchema: searchRedditOutputSchema,
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-        destructiveHint: false,
-        openWorldHint: true,
-      },
-    },
-    async ({ queries }, ctx) => {
-      if (!getCapabilities().search) {
-        return toToolResponse(toolFailure(getMissingEnvMessage('search')));
-      }
-
-      const guard = await requireBootstrap(ctx);
-      if (guard) {
-        return guard;
-      }
-
-      const env = parseEnv();
-      const reporter = createToolReporter(ctx, 'search-reddit');
-      const result = await handleSearchReddit(queries, env.SEARCH_API_KEY!, reporter);
-
-      await reporter.progress(100, 100, result.isError ? 'Reddit search failed' : 'Reddit search complete');
-      return toToolResponse(result);
-    },
-  );
 }
 
 export function registerGetRedditPostTool(server: MCPServer): void {

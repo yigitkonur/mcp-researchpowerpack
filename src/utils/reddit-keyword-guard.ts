@@ -27,10 +27,10 @@ export async function redditKeywordGuard(
   await store.patch(workflowKey, { redditWarningShown: true });
 
   return error([
-    '❌ `web-search` is not the best entry point for Reddit-first discovery.',
+    '❌ Putting `reddit` in a `web-search` query without setting the scope flag wastes a turn — the result is biased toward subreddit homepages and namesake hits.',
     '',
     `Blocked query: ${matchedQuery}`,
     '',
-    'Use `search-reddit` for Reddit discovery, or use an explicit non-Reddit web query first.',
+    'For Reddit discovery, call `web-search` with `scope: "reddit"` — the server appends `site:reddit.com` and filters results to post permalinks. For non-Reddit web search, drop the word "reddit" from the query.',
   ].join('\n'));
 }

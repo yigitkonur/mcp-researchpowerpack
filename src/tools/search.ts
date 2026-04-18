@@ -59,9 +59,41 @@ interface SearchResponse {
 
 // --- Helpers ---
 
+/** Reddit post permalink: /r/{sub}/comments/{id}/ — drops subreddit
+ *  homepages, /rising, /new, /top, etc. so only post URLs reach the agent.
+ *  See mcp-revisions/tool-surface/02-extend-web-search-with-reddit-scope.md. */
+const REDDIT_POST_PERMALINK = /\/r\/[^/]+\/comments\/[a-z0-9]+\//i;
+const REDDIT_HOST = /(?:^|\.)reddit\.com$/i;
+
+function decorateQueriesForScope(queries: string[], scope: 'web' | 'reddit' | 'both'): string[] {
+  if (scope === 'web') return queries;
+  const reddited = queries.map((q) =>
+    /\bsite:reddit\.com\b/i.test(q) ? q : `${q} site:reddit.com`,
+  );
+  return scope === 'reddit' ? reddited : [...queries, ...reddited];
+}
+
 async function executeSearches(queries: string[]): Promise<SearchResponse> {
   const client = new SearchClient();
   return client.searchMultiple(queries);
+}
+
+function filterScopedSearches(
+  response: SearchResponse,
+  scope: 'web' | 'reddit' | 'both',
+): SearchResponse {
+  if (scope === 'web') return response;
+  const filtered = response.searches.map((search) => ({
+    ...search,
+    results: search.results.filter((r) => {
+      let host: string;
+      try { host = new URL(r.link).hostname; } catch { return true; }
+      // Non-reddit URLs pass through; reddit URLs must be post permalinks.
+      if (!REDDIT_HOST.test(host)) return scope !== 'reddit';
+      return REDDIT_POST_PERMALINK.test(r.link);
+    }),
+  }));
+  return { ...response, searches: filtered };
 }
 
 function processResults(response: SearchResponse): {
@@ -329,7 +361,7 @@ function buildWebSearchError(
     toolName: 'web-search',
     howToFix: ['Verify SERPER_API_KEY is set correctly'],
     alternatives: [
-      'search-reddit(queries=["topic recommendations"]) — returns Reddit URLs via Google search',
+      'web-search(queries=["topic recommendations"], extract="...", scope: "reddit") — Reddit-only post permalinks via the same backend',
       'scrape-links(urls=[...], extract="...") — if you have URLs from prior steps, scrape them now',
     ],
   });
@@ -348,11 +380,17 @@ export async function handleWebSearch(
   const startTime = Date.now();
 
   try {
-    mcpLog('info', `Searching for ${params.queries.length} query/queries`, 'search');
-    await reporter.log('info', `Searching for ${params.queries.length} query/queries`);
+    const effectiveQueries = decorateQueriesForScope(params.queries, params.scope);
+    if (params.scope !== 'web') {
+      mcpLog('info', `Searching scope=${params.scope}: ${params.queries.length} input queries → ${effectiveQueries.length} dispatched`, 'search');
+    } else {
+      mcpLog('info', `Searching for ${params.queries.length} query/queries`, 'search');
+    }
+    await reporter.log('info', `Searching for ${effectiveQueries.length} query/queries (scope=${params.scope})`);
     await reporter.progress(15, 100, 'Submitting search queries');
 
-    const response = await executeSearches(params.queries);
+    const rawResponse = await executeSearches(effectiveQueries);
+    const response = filterScopedSearches(rawResponse, params.scope);
     await reporter.progress(50, 100, 'Collected search results');
 
     const { aggregation } = processResults(response);
@@ -466,9 +504,14 @@ export function registerWebSearchTool(server: MCPServer): void {
         return guard;
       }
 
-      const redditGuard = await redditKeywordGuard(ctx, args.queries);
-      if (redditGuard) {
-        return redditGuard;
+      // The keyword guard is only relevant for scope=web — when the caller
+      // explicitly asked for the reddit scope, "reddit" in the query is
+      // intentional context, not a tool-choice mistake.
+      if (args.scope === 'web') {
+        const redditGuard = await redditKeywordGuard(ctx, args.queries);
+        if (redditGuard) {
+          return redditGuard;
+        }
       }
 
       const reporter = createToolReporter(ctx, 'web-search');
