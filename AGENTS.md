@@ -4,13 +4,13 @@ Operating standard for AI agents working on this repository. Read first, every s
 
 ## What this repo is
 
-`mcp-researchpowerpack` (formerly `mcp-researchpowerpack-http` — HTTP suffix dropped in v4.3.0) — an HTTP-first MCP server built on `mcp-use` exposing 4 research tools: `web-search`, `scrape-links`, `get-reddit-post`, and `start-research` (bootstrap gate). ES-module TypeScript, deployed to https://research.yigitkonur.com/mcp.
+`mcp-researchpowerpack` (formerly `mcp-researchpowerpack-http` — HTTP suffix dropped in v4.3.0) — an HTTP-first MCP server built on `mcp-use` exposing 4 research tools: `web-search`, `scrape-links`, `get-reddit-post`, and `start-research` (bootstrap gate). ES-module TypeScript. Self-hosted — there is no canonical hosted instance. If you maintain your own deployment, set `MCP_DEPLOY_URL` in your local environment so the live-verification commands below resolve to your endpoint.
 
 `CLAUDE.md` carries the full architecture map and command list. Read it for code-level work. `CHANGELOG.md` carries the user-facing release notes. This file is the **process** standard — what to do, in what order, with what verification.
 
 ## Branch + deploy contract
 
-- Every push to `main` *should* trigger an auto-deploy to `research.yigitkonur.com/mcp`, but the GitHub-webhook→Manufact path is not 100% reliable (it was observed silent during the v4.3.0 rename). After every push, verify the live `health://status.version` matches `package.json.version`. If not, run `pnpm dlx mcp-use deploy --org primary-2e5b3ad6 -y` to force a deploy.
+- Every push to `main` *should* trigger an auto-deploy to your linked Manufact server (set in `.mcp-use/project.json`), but the GitHub-webhook → Manufact path is not 100% reliable (it was observed silent during the v4.3.0 rename). After every push, verify the live `health://status.version` matches `package.json.version`. If not, run `pnpm dlx mcp-use deploy --org <your-org-slug> -y` to force a deploy.
 - The "Publish to npm" GitHub Action is independent of Manufact and ships the package to https://www.npmjs.com/package/mcp-researchpowerpack — that's a separate success surface, do not conflate it with the live deploy being current.
 - Long-running feature work happens on a branch in a worktree at `/Users/yigitkonur/dev/mcp-researchpowerpack-http-revisions/` (worktree path predates the repo rename — kept as-is).
 - Never push to `main` without first running the verification chain in §"Before you push".
@@ -43,14 +43,14 @@ Then invoke it as `/test-by-mcpc-cli` at the start of any verification session a
 
 ### Standard live-server smoke test
 
-Run this against `https://research.yigitkonur.com/mcp` after every deploy:
+Run this against your deployment URL after every deploy. Replace `$MCP_URL` with the URL Manufact (or your chosen platform) returned for the linked deployment:
 
 ```bash
-mcpc connect https://research.yigitkonur.com/mcp @research
-mcpc @research ping
-mcpc @research tools-list --full | grep -E "name|requires"
-mcpc @research resources-read health://status
-mcpc @research close
+mcpc connect "$MCP_URL" @rp
+mcpc @rp ping
+mcpc @rp tools-list --full | grep -E "name|requires"
+mcpc @rp resources-read health://status
+mcpc @rp close
 ```
 
 Acceptance criteria for the current revision (v4.3+):

@@ -5,8 +5,8 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The live server runs at https://research.yigitkonur.com/mcp — every push to
-`main` deploys automatically.
+This is a self-hosted MCP server. Install from npm or clone the repo and
+deploy it to your own infrastructure — there is no canonical hosted instance.
 
 ## [5.0.0] - 2026-04-18
 
@@ -34,15 +34,15 @@ skill for the full agentic playbook.
   aliases are kept on the new package), but `package.json` references and
   registry URLs change.
 
-If you only consume the live server at `research.yigitkonur.com/mcp` from an
-LLM client, you do not need to do anything except possibly update one tool
-name in your prompts (`search-reddit` → `web-search` with `scope: "reddit"`).
+If you only consume your existing deployment from an LLM client, you do not
+need to do anything except possibly update one tool name in your prompts
+(`search-reddit` → `web-search` with `scope: "reddit"`).
 
 ### Renamed
 
 - **Package: `mcp-researchpowerpack-http` → `mcp-researchpowerpack`.** The HTTP suffix was redundant — this server has only ever been HTTP. Legacy bin names (`mcp-researchpowerpack-http`, `mcp-research-powerpack-http`) still work, so existing `npx` commands keep functioning. The npm package `mcp-researchpowerpack-http` is frozen at 4.2.5 and superseded by this one.
 - **GitHub repo: `mcp-researchpowerpack-http` → `mcp-researchpowerpack`.** GitHub auto-redirects the old URL.
-- **Manufact deployment binding** updated to the new repo. The live URL `research.yigitkonur.com/mcp` is unchanged — no client config update required.
+- **Manufact deployment binding** updated to the new repo. Existing deployments keep their URL — no client config update required.
 
 ### Removed
 
@@ -80,7 +80,7 @@ name in your prompts (`search-reddit` → `web-search` with `scope: "reddit"`).
 
 ### Migration notes
 
-- **MCP URL is unchanged** (`https://research.yigitkonur.com/mcp`). Most users need no action.
+- **Your deployment URL is unchanged.** If you self-host, the rename does not move your endpoint. Most users need no action.
 - **If you were calling `search-reddit`**, switch to `web-search` with `scope: "reddit"`. Same result quality, no subreddit-homepage noise.
 - **If you were checking `Successful: 0` text from `get-reddit-post`** to detect failure, switch to checking `response.isError` — it now flips correctly.
 - **If you were passing Reddit URLs to `scrape-links`**, you'll now get an `UNSUPPORTED_URL_TYPE` error. Switch those calls to `get-reddit-post`.

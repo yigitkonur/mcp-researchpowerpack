@@ -106,18 +106,31 @@ make info      # show detected config
 
 ## Cloud deployment
 
-The server runs live at **`https://research.yigitkonur.com/mcp`** (Streamable HTTP transport, MCP protocol version `2025-11-25`).
-
-Every push to `main` triggers an automatic redeploy — no manual deploy step needed after merging.
-
-### Smoke-testing the live server with mcpc
+This is a self-hosted MCP server. Deploy your own — there is no canonical hosted instance. Streamable HTTP transport, MCP protocol version `2025-11-25`.
 
 ```bash
-mcpc connect https://research.yigitkonur.com/mcp @research
-mcpc @research ping                   # latency check
-mcpc @research tools-list --full      # verify all 4 tools are present
-mcpc @research resources-read health://status   # uptime + active sessions
-mcpc close @research
+pnpm build
+pnpm deploy        # links to your Manufact account (mcp-use cloud)
 ```
 
-Expected: 4 tools (`web-search`, `search-reddit`, `get-reddit-post`, `scrape-links`), 1 resource (`health://status`), no prompts. Server name `mcp-researchpowerpack-http`, current version reported in `health://status`.
+Or self-host anywhere with Node 20.19+ / 22.12+:
+
+```bash
+HOST=0.0.0.0 ALLOWED_ORIGINS=https://app.example.com pnpm start
+```
+
+If you push to `main` after `pnpm deploy` linked the project, the linked Manufact server *should* redeploy automatically — verify with the smoke test below and force-deploy via `pnpm dlx mcp-use deploy --org <your-org-slug> -y` if the version drifts.
+
+### Smoke-testing your deployment with mcpc
+
+Replace `$MCP_URL` with the URL your deployment exposes:
+
+```bash
+mcpc connect "$MCP_URL" @rp
+mcpc @rp ping                              # latency check
+mcpc @rp tools-list --full                 # verify all 4 tools are present
+mcpc @rp resources-read health://status    # uptime + active sessions + LLM health
+mcpc close @rp
+```
+
+Expected: 4 tools (`start-research`, `web-search`, `get-reddit-post`, `scrape-links`), 1 resource (`health://status`), 2 prompts (`deep-research`, `reddit-sentiment`). Server name `mcp-researchpowerpack`, version reported in `health://status` should match `package.json.version`.
