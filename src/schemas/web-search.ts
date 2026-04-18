@@ -41,6 +41,23 @@ export const webSearchOutputSchema = z.object({
   content: z
     .string()
     .describe('Markdown report with tiered results (LLM mode) or ranked URL list (raw mode).'),
+  results: z
+    .array(z.object({
+      rank: z.number().int().positive().describe('1-based rank in the merged ranking.'),
+      url: z.string().describe('Result URL.'),
+      title: z.string().describe('Page title from the result.'),
+      snippet: z.string().describe('Search snippet from the result.'),
+      source_type: z
+        .enum(['reddit', 'github', 'docs', 'blog', 'paper', 'qa', 'cve', 'news', 'video', 'web'])
+        .describe(
+          'Heuristic source kind from the URL. When the LLM classifier is online its tag overrides this.',
+        ),
+      score: z.number().describe('Composite CTR-weighted score, normalized to 100.'),
+      seen_in: z.number().int().nonnegative().describe('Number of input queries this URL appeared in.'),
+      best_position: z.number().int().nonnegative().describe('Best (lowest) SERP position observed.'),
+    }))
+    .optional()
+    .describe('Per-result structured payload — same data the markdown table renders, machine-readable.'),
   metadata: z.object({
     total_items: z.number().int().nonnegative().describe('Number of queries executed.'),
     successful: z.number().int().nonnegative().describe('Queries that returned results.'),
@@ -48,6 +65,7 @@ export const webSearchOutputSchema = z.object({
     execution_time_ms: z.number().int().nonnegative().describe('Wall clock time in milliseconds.'),
     llm_classified: z.boolean().describe('Whether LLM classification was applied.'),
     llm_error: z.string().optional().describe('LLM error if classification failed and fell back to raw.'),
+    scope: z.enum(['web', 'reddit', 'both']).optional().describe('Search scope used.'),
     coverage_summary: z
       .array(z.object({
         query: z.string().describe('The search query.'),
