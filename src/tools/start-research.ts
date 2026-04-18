@@ -19,10 +19,20 @@ import { mcpLog } from '../utils/logger.js';
 import { toolFailure, toolSuccess, toToolResponse, type ToolExecutionResult } from './mcp-helpers.js';
 import { formatError } from './utils.js';
 
-export function buildStaticScaffolding(goal?: string): string {
+export function buildStaticScaffolding(goal?: string, opts: { plannerAvailable?: boolean } = {}): string {
+  const plannerAvailable = opts.plannerAvailable ?? true;
   const focusLine = goal
     ? `> Focus for this session: ${goal}`
     : '> Focus for this session: not yet specified — set one on the next pass';
+
+  // The classifier output (synthesis / gaps / refine_queries) only exists
+  // when the LLM planner is reachable. When it's not, do not promise it —
+  // instead tell the agent the loop runs on raw URL lists.
+  // See: docs/code-review/context/03-llm-degradation-paths.md
+  //      mcp-revisions/llm-degradation/02-drop-synthesis-promise-when-offline.md
+  const loopReadStep = plannerAvailable
+    ? '2. **Read the classifier output**: `synthesis` (terrain), `gaps` (what\'s missing, with ids), `refine_queries` (follow-ups tied to gap ids).'
+    : '2. **No classifier output is available** in this mode (LLM planner offline). The web-search response is the raw ranked URL list — synthesize the terrain yourself from titles + snippets. Use `web-search` `scope: "reddit"` for sentiment/migration; `scrape-links` for primary sources.';
 
   return [
     '# Research session started',
@@ -57,7 +67,7 @@ export function buildStaticScaffolding(goal?: string): string {
     '## The research loop',
     '',
     '1. **Produce concept groups → fire `web-search` once** (all groups\' queries concatenated into the flat array).',
-    '2. **Read the classifier output**: `synthesis` (terrain), `gaps` (what\'s missing, with ids), `refine_queries` (follow-ups tied to gap ids).',
+    loopReadStep,
     '3. **Scrape with `scrape-links`**: every HIGHLY_RELEVANT plus the 2–3 best MAYBE_RELEVANT. One batched call. Treat `extract` as a **semantic instruction** — describe the SHAPE of what you want, not exact words to match. Use `|` to separate facets. Good: `root cause | affected versions | fix | workarounds | timeline`.',
     '4. **Read every scrape excerpt** — extract new terms, version numbers, vendor names, failure modes from the `## Follow-up signals` section of each extract. These seed the next-pass concept groups.',
     '5. **Next pass: close the gaps.** Build new concept groups targeting each `gaps[]` item. Do not repeat a group unless pass 1 returned fewer than 3 distinct HIGHLY_RELEVANT sources for it.',
@@ -174,7 +184,11 @@ async function handleStartResearch(
       return toolSuccess(stub, { content: stub });
     }
 
-    const scaffolding = buildStaticScaffolding(params.goal);
+    // include_playbook: true OR planner is healthy → emit the full scaffolding,
+    // but route the classifier-output promise based on the actual planner state.
+    const scaffolding = buildStaticScaffolding(params.goal, {
+      plannerAvailable: !plannerKnownOffline,
+    });
 
     let brief = '';
     if (params.goal) {

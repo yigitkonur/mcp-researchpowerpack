@@ -193,14 +193,18 @@ async function processItemsWithLlm(
   enhancedInstruction: string,
   tokensPerUrl: number,
   llmProcessor: ReturnType<typeof createLLMProcessor>,
-): Promise<{ items: ProcessedResult[]; llmErrors: number }> {
+  reporter: ToolReporter,
+): Promise<{ items: ProcessedResult[]; llmErrors: number; llmAttempted: number }> {
   let llmErrors = 0;
 
   if (!llmProcessor || successItems.length === 0) {
     if (!llmProcessor && successItems.length > 0) {
       mcpLog('warning', 'LLM unavailable (LLM_EXTRACTION_API_KEY not set). Returning raw scraped content.', 'scrape');
+      // Surface degraded mode to the client. See:
+      //   mcp-revisions/llm-degradation/01-signal-degraded-via-ctx-log.md
+      void reporter.log('warning', 'llm_extractor_unreachable: planner not configured; raw scraped content returned');
     }
-    return { items: successItems, llmErrors };
+    return { items: successItems, llmErrors, llmAttempted: 0 };
   }
 
   mcpLog('info', `Starting parallel LLM extraction for ${successItems.length} pages (concurrency: ${CONCURRENCY.LLM_EXTRACTION})`, 'scrape');
@@ -221,10 +225,11 @@ async function processItemsWithLlm(
 
     llmErrors++;
     mcpLog('warning', `LLM extraction failed for ${item.url}: ${llmResult.error || 'unknown reason'}`, 'scrape');
+    void reporter.log('warning', `llm_extractor_unreachable: ${item.url} — ${llmResult.error || 'unknown reason'}`);
     return item;
   }, CONCURRENCY.LLM_EXTRACTION);
 
-  return { items: llmResults, llmErrors };
+  return { items: llmResults, llmErrors, llmAttempted: successItems.length };
 }
 
 function assembleContentEntries(successItems: ProcessedResult[], failedContents: string[]): string[] {
@@ -265,7 +270,24 @@ function buildScrapeResponse(
   totalBatches: number,
   llmErrors: number,
   executionTime: number,
+  llmAccounting: { llmAttempted: number; llmSucceeded: boolean },
 ): { content: string; structuredContent: ScrapeLinksOutput } {
+  // Be explicit about LLM accounting: how many URLs the LLM tried, how many
+  // succeeded, and whether the pass produced any value. Without this, the
+  // batch header reports `Successful: N + LLM extraction failures: N` and the
+  // caller can't tell whether the credits charged for the LLM pass produced
+  // anything.
+  const llmExtras: Record<string, string | number> = {};
+  if (llmAccounting.llmAttempted > 0) {
+    const ok = llmAccounting.llmAttempted - llmErrors;
+    llmExtras['LLM extraction'] = `${ok}/${llmAccounting.llmAttempted} succeeded`;
+    if (!llmAccounting.llmSucceeded) {
+      llmExtras['LLM credit'] = '0 charged (no extraction produced)';
+    }
+  } else if (llmErrors > 0) {
+    llmExtras['LLM extraction failures'] = llmErrors;
+  }
+
   const batchHeader = formatBatchHeader({
     title: `Scraped Content (${params.urls.length} URLs)`,
     totalItems: params.urls.length,
@@ -275,7 +297,7 @@ function buildScrapeResponse(
     batches: totalBatches,
     extras: {
       'Credits used': metrics.totalCredits,
-      ...(llmErrors > 0 ? { 'LLM extraction failures': llmErrors } : {}),
+      ...llmExtras,
     },
   });
 
@@ -371,8 +393,8 @@ export async function handleScrapeLinks(
   if (successItems.length > 0) {
     await reporter.progress(80, 100, 'Running LLM extraction over scraped pages');
   }
-  const { items: processedItems, llmErrors } = await processItemsWithLlm(
-    successItems, enhancedInstruction, tokensPerUrl, clients.llmProcessor,
+  const { items: processedItems, llmErrors, llmAttempted } = await processItemsWithLlm(
+    successItems, enhancedInstruction, tokensPerUrl, clients.llmProcessor, reporter,
   );
 
   const contents = assembleContentEntries(processedItems, failedContents);
@@ -384,6 +406,12 @@ export async function handleScrapeLinks(
     `Scrape completed with ${metrics.successful} success(es), ${metrics.failed} failure(s), and ${llmErrors} LLM extraction issue(s)`,
   );
 
+  // Credit policy: when LLM was attempted but every URL failed extraction,
+  // we still report the failures but make the credit reality explicit in
+  // the batch header so callers don't see "credits used" without knowing
+  // they paid for a no-op LLM pass. See:
+  //   mcp-revisions/llm-degradation/03-extraction-failure-credit-policy.md
+  const llmSucceeded = llmAttempted > 0 && llmErrors < llmAttempted;
   const result = buildScrapeResponse(
     params,
     contents,
@@ -392,6 +420,7 @@ export async function handleScrapeLinks(
     totalBatches,
     llmErrors,
     executionTime,
+    { llmAttempted, llmSucceeded },
   );
 
   // Contract: every URL failed → return isError: true so callers that check

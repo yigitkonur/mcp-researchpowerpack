@@ -412,6 +412,8 @@ export async function handleWebSearch(
       if (!useRaw && !llmProcessor) {
         llmError = 'LLM unavailable (LLM_EXTRACTION_API_KEY not set). Falling back to raw output.';
         mcpLog('warning', llmError, 'search');
+        // mcp-revisions/llm-degradation/01: surface degraded mode to the client.
+        await reporter.log('warning', 'llm_classifier_unreachable: planner not configured; raw ranked list returned');
       }
       let rawRefineQueries: RefineQuerySuggestion[] | undefined;
       if (useRaw && llmProcessor) {
@@ -451,6 +453,8 @@ export async function handleWebSearch(
         // Classification failed — fall back to raw
         llmError = classification.error ?? 'Unknown classification error';
         mcpLog('warning', `Classification failed, falling back to raw: ${llmError}`, 'search');
+        // mcp-revisions/llm-degradation/01: surface degraded mode to the client.
+        await reporter.log('warning', `llm_classifier_unreachable: ${llmError}`);
         markdown = appendSignalsAndFollowUps(
           buildRawOutput(params.queries, aggregation, response.searches, params.verbose),
           buildSignalsSection(aggregation, response.searches, response.totalQueries),
