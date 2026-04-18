@@ -25,6 +25,7 @@ import {
   type RefineQuerySuggestion,
 } from '../services/llm-processor.js';
 import { classifyError } from '../utils/errors.js';
+import { classifySourceByUrl } from '../utils/source-type.js';
 import {
   mcpLog,
   formatError,
@@ -316,6 +317,7 @@ function buildMetadata(
   totalQueries: number,
   searches: SearchResponse['searches'],
   llmClassified: boolean,
+  scope: 'web' | 'reddit' | 'both',
   llmError?: string,
 ) {
   const coverageSummary = searches.map(s => {
@@ -336,10 +338,42 @@ function buildMetadata(
     failed: totalQueries - searches.filter(s => s.results.length > 0).length,
     execution_time_ms: executionTime,
     llm_classified: llmClassified,
+    scope,
     ...(llmError ? { llm_error: llmError } : {}),
     coverage_summary: coverageSummary,
     ...(lowYieldQueries.length > 0 ? { low_yield_queries: lowYieldQueries } : {}),
   };
+}
+
+function buildStructuredResults(
+  aggregation: SearchAggregation,
+  llmTagsByRank?: Map<number, string>,
+): Array<{
+  rank: number;
+  url: string;
+  title: string;
+  snippet: string;
+  source_type: 'reddit' | 'github' | 'docs' | 'blog' | 'paper' | 'qa' | 'cve' | 'news' | 'video' | 'web';
+  score: number;
+  seen_in: number;
+  best_position: number;
+}> {
+  return aggregation.rankedUrls.map((row) => {
+    // LLM tag wins when present; heuristic is the always-on fallback. See:
+    // mcp-revisions/output-shaping/06-source-type-tagging-without-llm.md.
+    const llmTag = llmTagsByRank?.get(row.rank);
+    const heuristic = classifySourceByUrl(row.url);
+    return {
+      rank: row.rank,
+      url: row.url,
+      title: row.title,
+      snippet: row.snippet,
+      source_type: ((llmTag as typeof heuristic) ?? heuristic),
+      score: Number(row.score.toFixed(2)),
+      seen_in: row.frequency,
+      best_position: row.bestPosition,
+    };
+  });
 }
 
 // --- Error builder ---
@@ -467,8 +501,20 @@ export async function handleWebSearch(
 
     const executionTime = Date.now() - startTime;
     const metadata = buildMetadata(
-      aggregation, executionTime, response.totalQueries, response.searches, llmClassified, llmError,
+      aggregation, executionTime, response.totalQueries, response.searches, llmClassified, params.scope, llmError,
     );
+
+    // Build per-row structured results so capability-aware clients can
+    // index into `structuredContent.results` rather than regex-scrape the
+    // markdown table. The LLM tag wins when present; heuristic is the
+    // always-on fallback.
+    const llmTagsByRank = new Map<number, string>();
+    // (When classification succeeds the source_type per-row is populated
+    // inside buildClassifiedOutput via the entry.source_type field — but
+    // we don't have a direct handle on it here without a refactor. The
+    // heuristic alone covers the structuredContent shape correctly; the
+    // LLM-tagged variant remains in the markdown body.)
+    const results = buildStructuredResults(aggregation, llmTagsByRank);
 
     mcpLog('info', `Search completed: ${aggregation.rankedUrls.length} URLs, classified=${llmClassified}`, 'search');
     await reporter.log('info', `Search completed with ${aggregation.rankedUrls.length} URLs (classified: ${llmClassified})`);
@@ -476,7 +522,7 @@ export async function handleWebSearch(
     const footer = `\n---\n*${formatDuration(executionTime)} | ${aggregation.totalUniqueUrls} unique URLs${llmClassified ? ' | LLM classified' : ''}*`;
     const fullMarkdown = markdown + footer;
 
-    return toolSuccess(fullMarkdown, { content: fullMarkdown, metadata });
+    return toolSuccess(fullMarkdown, { content: fullMarkdown, results, metadata });
   } catch (error) {
     return buildWebSearchError(error, params, startTime);
   }
