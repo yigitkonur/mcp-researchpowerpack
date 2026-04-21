@@ -478,14 +478,19 @@ async function main(): Promise<void> {
     // Default mode (no LLM_API_KEY in test env) → degraded compact stub.
     const startedJson = await callTool(baseUrl, sessionId, 'start-research', {}, 7);
     assert.notEqual(startedJson.result?.isError, true);
-    assert.equal(typeof startedJson.result?.structuredContent?.content, 'string');
-    assert.match(JSON.stringify(startedJson.result), /Research session started/);
-    assert.match(JSON.stringify(startedJson.result), /scrape-links/);
-    assert.match(JSON.stringify(startedJson.result), /web-search/);
+    // start-research carries no structuredContent (dedup v6.1): primary markdown
+    // lives in content[0].text, nothing structured to expose.
+    const startedText: string | undefined = startedJson.result?.content?.[0]?.text;
+    assert.equal(typeof startedText, 'string');
+    assert.equal(startedJson.result?.structuredContent, undefined, 'start-research must not emit structuredContent');
+    assert.match(startedText!, /Research session started/);
+    assert.match(startedText!, /scrape-links/);
+    assert.match(startedText!, /web-search/);
     // Degraded stub explicitly mentions the planner-offline state.
-    assert.match(JSON.stringify(startedJson.result), /LLM planner offline|compact stub/);
-    // Stub should be dramatically smaller than the full playbook.
-    const stubBytes = JSON.stringify(startedJson.result?.structuredContent ?? {}).length;
+    assert.match(startedText!, /LLM planner offline|compact stub/);
+    // Stub should be dramatically smaller than the full playbook — size-bound
+    // against the primary markdown now that structuredContent is gone.
+    const stubBytes = (startedText ?? '').length;
     assert.ok(stubBytes < 2500, `expected degraded stub <2500 bytes, got ${stubBytes}`);
 
     // Opting into the full playbook via include_playbook=true restores the full tactic reference.

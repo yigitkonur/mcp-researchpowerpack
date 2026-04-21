@@ -886,6 +886,7 @@ keyword_seeds:
 - Use operators where helpful (site:, quotes, verbatim version numbers).
 - DIVERSE facets — same noun-phrase cannot repeat across seeds with adjectives-only variation.
 - Do NOT invent vendor names you are uncertain exist.
+- For \`site:<domain>\` filters, ONLY use domains you are highly confident are real. Safe choices: \`github.com\`, \`stackoverflow.com\`, \`reddit.com\`, \`news.ycombinator.com\`, \`arxiv.org\`, \`nvd.nist.gov\`, \`pypi.org\`, \`npmjs.com\`, plus any canonical homepage/docs domain explicitly spelled out in the goal itself (e.g. goal names "Cursor" → \`cursor.com\`/\`docs.cursor.com\` is acceptable). If you don't know the product's real docs domain, leave the query open (no \`site:\`) instead of guessing.
 
 freshness_window:
 - If the goal mentions a recent release / date / version, use "days" or "weeks".

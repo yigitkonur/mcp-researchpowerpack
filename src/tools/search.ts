@@ -21,6 +21,7 @@ import {
   createLLMProcessor,
   classifySearchResults,
   suggestRefineQueriesForRawMode,
+  type ClassificationEntry,
   type ClassificationResult,
   type RefineQuerySuggestion,
 } from '../services/llm-processor.js';
@@ -187,6 +188,74 @@ export function appendSignalsAndFollowUps(
   return sections.join('\n');
 }
 
+// --- "Start here" section ---
+//
+// Surfaces the best 3-5 URLs at the top of the classified response so an agent
+// skimming the first screen sees them before tier tables. Deterministic: uses
+// existing `tier` + `rank` + `reason` from the classifier, no extra LLM call.
+//
+// Algorithm: take HIGHLY_RELEVANT by rank up to MAX_START_HERE; if fewer than
+// MIN_START_HERE, pad from top MAYBE_RELEVANT; skip entirely if no entries
+// above OTHER.
+
+const MIN_START_HERE = 3;
+const MAX_START_HERE = 5;
+
+/** Minimal structural shape — avoids coupling to private `RankedUrl` type. */
+interface StartHereCandidate {
+  readonly rank: number;
+  readonly url: string;
+  readonly title: string;
+}
+
+interface StartHereTiers {
+  readonly high: readonly StartHereCandidate[];
+  readonly maybe: readonly StartHereCandidate[];
+}
+
+export function buildStartHereSection(
+  tiers: StartHereTiers,
+  entryByRank: Map<number, ClassificationEntry>,
+  opts: { min?: number; max?: number } = {},
+): string {
+  const min = opts.min ?? MIN_START_HERE;
+  const max = opts.max ?? MAX_START_HERE;
+
+  const picks: Array<{ candidate: StartHereCandidate; tier: 'HIGHLY_RELEVANT' | 'MAYBE_RELEVANT' }> = [];
+
+  for (const candidate of tiers.high) {
+    if (picks.length >= max) break;
+    picks.push({ candidate, tier: 'HIGHLY_RELEVANT' });
+  }
+
+  if (picks.length < min) {
+    const target = Math.min(min, max);
+    for (const candidate of tiers.maybe) {
+      if (picks.length >= target) break;
+      picks.push({ candidate, tier: 'MAYBE_RELEVANT' });
+    }
+  }
+
+  if (picks.length === 0) return '';
+
+  const lines: string[] = [];
+  lines.push('## Start here — best candidates for your extract');
+  picks.forEach((pick, i) => {
+    const entry = entryByRank.get(pick.candidate.rank);
+    const reason = entry?.reason && entry.reason.trim().length > 0 ? entry.reason : '—';
+    let domain: string;
+    try {
+      domain = new URL(pick.candidate.url).hostname.replace(/^www\./, '');
+    } catch {
+      domain = pick.candidate.url;
+    }
+    lines.push(
+      `${i + 1}. **[${pick.candidate.title}](${pick.candidate.url})** — ${domain} — ${reason} *(${pick.tier}, rank ${pick.candidate.rank})*`,
+    );
+  });
+  return lines.join('\n');
+}
+
 // --- Classified output (3-tier LLM-classified table) ---
 
 function buildClassifiedOutput(
@@ -231,6 +300,18 @@ function buildClassifiedOutput(
     lines.push(`> Confidence: \`${classification.confidence}\`${confReason}`);
   }
   lines.push('');
+
+  // "Start here" block: surface the top 3-5 URLs above the synthesis so an
+  // agent skimming the first screen sees scrape candidates before prose.
+  const startHere = buildStartHereSection(
+    { high: tiers.high, maybe: tiers.maybe },
+    entryByRank,
+  );
+  if (startHere) {
+    lines.push(startHere);
+    lines.push('');
+  }
+
   lines.push(`**Summary:** ${classification.synthesis}`);
   lines.push('');
 
@@ -520,7 +601,7 @@ export async function handleWebSearch(
     const footer = `\n---\n*${formatDuration(executionTime)} | ${aggregation.totalUniqueUrls} unique URLs${llmClassified ? ' | LLM classified' : ''}*`;
     const fullMarkdown = markdown + footer;
 
-    return toolSuccess(fullMarkdown, { content: fullMarkdown, results, metadata });
+    return toolSuccess(fullMarkdown, { results, metadata });
   } catch (error) {
     return buildWebSearchError(error, params, startTime);
   }

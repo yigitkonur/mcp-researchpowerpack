@@ -38,9 +38,10 @@ export const webSearchParamsSchema = z.object({
 export type WebSearchParams = z.infer<typeof webSearchParamsSchema>;
 
 export const webSearchOutputSchema = z.object({
-  content: z
-    .string()
-    .describe('Markdown report with tiered results (LLM mode) or ranked URL list (raw mode).'),
+  // `content` deliberately NOT duplicated here — the primary markdown lives in
+  // the MCP tool result's `content[0].text`. Previously this schema echoed the
+  // whole markdown under `structuredContent.content`, doubling token cost for
+  // clients that forward both fields to an LLM.
   results: z
     .array(z.object({
       rank: z.number().int().positive().describe('1-based rank in the merged ranking.'),

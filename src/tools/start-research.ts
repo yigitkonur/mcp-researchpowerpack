@@ -213,7 +213,7 @@ async function handleStartResearch(
 
     if (plannerKnownOffline && !params.include_playbook) {
       const stub = buildDegradedStub(params.goal);
-      return toolSuccess(stub, { content: stub });
+      return toolSuccess(stub);
     }
 
     const scaffolding = buildStaticScaffolding(params.goal, {
@@ -233,7 +233,7 @@ async function handleStartResearch(
       ? `${scaffolding}\n\n---\n\n${brief}`
       : `${scaffolding}${briefFallbackNote}`;
 
-    return toolSuccess(content, { content });
+    return toolSuccess(content);
   } catch (err: unknown) {
     const structuredError = classifyError(err);
     mcpLog('error', `start-research: ${structuredError.message}`, 'start-research');

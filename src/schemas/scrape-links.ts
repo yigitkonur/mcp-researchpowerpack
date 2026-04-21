@@ -25,9 +25,9 @@ export const scrapeLinksParamsSchema = z.object({
 export type ScrapeLinksParams = z.infer<typeof scrapeLinksParamsSchema>;
 
 export const scrapeLinksOutputSchema = z.object({
-  content: z
-    .string()
-    .describe('LLM-extracted content from scraped pages per the extract instructions.'),
+  // `content` deliberately NOT duplicated here — the primary markdown lives in
+  // the MCP tool result's `content[0].text`. Previously this schema echoed the
+  // whole extraction output, doubling token cost for clients that forward both.
   metadata: z.object({
     total_items: z.number().int().nonnegative().describe('Number of URLs processed.'),
     successful: z.number().int().nonnegative().describe('URLs fetched successfully.'),
