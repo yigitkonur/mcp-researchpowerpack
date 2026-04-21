@@ -113,7 +113,6 @@ export function _resetLLMHealthForTests(): void {
 interface ProcessingConfig {
   readonly enabled: boolean;
   readonly extract: string | undefined;
-  readonly max_tokens?: number;
   readonly url?: string;
 }
 
@@ -169,11 +168,10 @@ export function createLLMProcessor(): OpenAI | null {
   return llmClient;
 }
 
-function buildChatRequestBody(model: string, prompt: string, maxTokens: number): Record<string, unknown> {
+function buildChatRequestBody(model: string, prompt: string): Record<string, unknown> {
   const requestBody: Record<string, unknown> = {
     model,
     messages: [{ role: 'user', content: prompt }],
-    max_tokens: maxTokens,
   };
 
   if (LLM_EXTRACTION.REASONING_EFFORT !== 'none') {
@@ -183,52 +181,41 @@ function buildChatRequestBody(model: string, prompt: string, maxTokens: number):
   return requestBody;
 }
 
-export async function requestTextWithFallback(
+export async function requestText(
   processor: OpenAITextGenerator,
   prompt: string,
-  maxTokens: number,
   operationLabel: string,
   signal?: AbortSignal,
 ): Promise<{ content: string | null; model: string; error?: string }> {
-  const models = [...new Set([
-    LLM_EXTRACTION.MODEL,
-    LLM_EXTRACTION.FALLBACK_MODEL,
-  ].filter(Boolean))];
+  const model = LLM_EXTRACTION.MODEL;
 
-  let lastError = 'Unknown LLM error';
+  try {
+    const response = await withStallProtection(
+      (stallSignal) => processor.chat.completions.create(
+        buildChatRequestBody(model, prompt) as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
+        {
+          signal: signal ? AbortSignal.any([stallSignal, signal]) : stallSignal,
+          timeout: LLM_REQUEST_DEADLINE_MS,
+        },
+      ),
+      LLM_STALL_TIMEOUT_MS,
+      3,
+      `${operationLabel} (${model})`,
+    );
 
-  for (const model of models) {
-    try {
-      const response = await withStallProtection(
-        (stallSignal) => processor.chat.completions.create(
-          buildChatRequestBody(model, prompt, maxTokens) as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
-          {
-            signal: signal ? AbortSignal.any([stallSignal, signal]) : stallSignal,
-            timeout: LLM_REQUEST_DEADLINE_MS,
-          },
-        ),
-        LLM_STALL_TIMEOUT_MS,
-        3,
-        `${operationLabel} (${model})`,
-      );
-
-      const content = response.choices?.[0]?.message?.content?.trim();
-      if (content) {
-        if (model !== LLM_EXTRACTION.MODEL) {
-          mcpLog('warning', `${operationLabel} succeeded with fallback model ${model}`, 'llm');
-        }
-        return { content, model };
-      }
-
-      lastError = `Empty response from model ${model}`;
-      mcpLog('warning', `${operationLabel} returned empty content for model ${model}`, 'llm');
-    } catch (err: unknown) {
-      lastError = err instanceof Error ? err.message : String(err);
-      mcpLog('warning', `${operationLabel} failed for model ${model}: ${lastError}`, 'llm');
+    const content = response.choices?.[0]?.message?.content?.trim();
+    if (content) {
+      return { content, model };
     }
-  }
 
-  return { content: null, model: LLM_EXTRACTION.FALLBACK_MODEL, error: lastError };
+    const err = `Empty response from model ${model}`;
+    mcpLog('warning', `${operationLabel} returned empty content for model ${model}`, 'llm');
+    return { content: null, model, error: err };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    mcpLog('warning', `${operationLabel} failed for model ${model}: ${message}`, 'llm');
+    return { content: null, model, error: message };
+  }
 }
 
 /**
@@ -417,10 +404,9 @@ ${truncatedContent}`;
         mcpLog('warning', `Retry attempt ${attempt}/${LLM_RETRY_CONFIG.maxRetries}`, 'llm');
       }
 
-      const response = await requestTextWithFallback(
+      const response = await requestText(
         processor,
         prompt,
-        config.max_tokens || LLM_EXTRACTION.MAX_TOKENS,
         'LLM extraction',
         signal,
       );
@@ -549,7 +535,14 @@ export async function classifySearchResults(
 ): Promise<{ result: ClassificationResult | null; error?: string }> {
   const urlsToClassify = rankedUrls.slice(0, MAX_CLASSIFICATION_URLS);
 
-  // Build compressed result list — title + domain + snippet (truncated)
+  // Descending static weights fed to the LLM. Higher-ranked URLs get a bigger
+  // weight so the classifier biases HIGHLY_RELEVANT toward them. The weights
+  // here are a shown-to-LLM summary, not the internal CTR ranking (which
+  // still runs in url-aggregator.ts). Rank 11+ all bucket to w=1.
+  const STATIC_WEIGHTS = [30, 20, 15, 10, 8, 6, 5, 4, 3, 2] as const;
+  const weightForRank = (rank: number): number => STATIC_WEIGHTS[rank - 1] ?? 1;
+
+  // Build compressed result list — weight + title + domain + snippet (truncated)
   const lines: string[] = [];
   for (const url of urlsToClassify) {
     let domain: string;
@@ -561,7 +554,7 @@ export async function classifySearchResults(
     const snippet = url.snippet.length > 120
       ? url.snippet.slice(0, 117) + '...'
       : url.snippet;
-    lines.push(`[${url.rank}] ${url.title} — ${domain} — ${snippet}`);
+    lines.push(`[${url.rank}] w=${weightForRank(url.rank)} ${url.title} — ${domain} — ${snippet}`);
   }
 
   const prevQueriesBlock = previousQueries.length > 0
@@ -600,6 +593,8 @@ Return ONLY a JSON object (no markdown, no code fences):
   ]
 }
 
+WEIGHT SCHEME: each row is prefixed with a weight (w=N). Higher weight means the URL ranked better across input queries — prefer HIGHLY_RELEVANT for high-weight rows when content matches the objective. Weight alone never justifies HIGHLY_RELEVANT; snippet cues still drive the decision.
+
 SOURCE-OF-TRUTH RUBRIC (the "primary source" is goal-dependent — infer goal type from the objective):
 - spec / API / config questions → vendor_doc, github (README, RFC), release_notes are primary
 - bug / failure-mode questions → github (issue/PR), stackoverflow are primary
@@ -636,14 +631,9 @@ ${lines.join('\n')}`;
   try {
     mcpLog('info', `Classifying ${urlsToClassify.length} URLs against objective`, 'llm');
 
-    // Output budget needs room for: 50 results × (rank + tier + source_type + reason)
-    // plus gaps[] with descriptions, refine_queries[] with rationales, synthesis with citations,
-    // title, confidence, and confidence_reason. 4000 truncates JSON mid-structure for full outputs;
-    // 8000 leaves headroom for the richest cases.
-    const response = await requestTextWithFallback(
+    const response = await requestText(
       processor,
       prompt,
-      8000,
       'Search classification',
     );
 
@@ -723,10 +713,9 @@ RULES:
 - Keep rationales ≤12 words.`;
 
   try {
-    const response = await requestTextWithFallback(
+    const response = await requestText(
       processor,
       prompt,
-      800,
       'Raw-mode refine query generation',
     );
 
@@ -753,23 +742,24 @@ RULES:
 // Research Brief — goal-aware orientation (called by start-research)
 // ============================================================================
 
-export interface ResearchBriefConceptGroup {
-  readonly facet: string;
-  readonly queries: readonly string[];
+export type PrimaryBranch = 'reddit' | 'web' | 'both';
+
+export interface ResearchBriefStep {
+  readonly tool: 'web-search' | 'scrape-links';
+  readonly reason: string;
 }
 
 export interface ResearchBrief {
   readonly goal_class: string;
   readonly goal_class_reason: string;
-  readonly source_priority: readonly string[];
-  readonly sources_to_deprioritize: readonly string[];
-  readonly fire_reddit_branch: boolean;
-  readonly fire_reddit_reason: string;
+  readonly primary_branch: PrimaryBranch;
+  readonly primary_branch_reason: string;
   readonly freshness_window: string;
-  readonly concept_groups: readonly ResearchBriefConceptGroup[];
-  readonly anticipated_gaps: readonly string[];
-  readonly first_scrape_targets: readonly string[];
-  readonly success_criteria: readonly string[];
+  readonly first_call_sequence: readonly ResearchBriefStep[];
+  readonly keyword_seeds: readonly string[];
+  readonly iteration_hints: readonly string[];
+  readonly gaps_to_watch: readonly string[];
+  readonly stop_criteria: readonly string[];
 }
 
 const VALID_GOAL_CLASSES = new Set([
@@ -778,21 +768,22 @@ const VALID_GOAL_CLASSES = new Set([
 ]);
 
 const VALID_FRESHNESS = new Set(['days', 'weeks', 'months', 'years']);
+const VALID_BRANCHES = new Set<PrimaryBranch>(['reddit', 'web', 'both']);
+const VALID_STEP_TOOLS = new Set(['web-search', 'scrape-links']);
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === 'string');
 }
 
-function isConceptGroupArray(value: unknown): value is ResearchBriefConceptGroup[] {
-  return Array.isArray(value) && value.every((g) => {
-    if (typeof g !== 'object' || g === null) return false;
-    const facet = (g as Record<string, unknown>).facet;
-    const queries = (g as Record<string, unknown>).queries;
-    return typeof facet === 'string'
-      && facet.trim().length > 0
-      && isStringArray(queries)
-      && queries.length > 0
-      && queries.every((q) => q.trim().length > 0);
+function isStepArray(value: unknown): value is ResearchBriefStep[] {
+  return Array.isArray(value) && value.every((s) => {
+    if (typeof s !== 'object' || s === null) return false;
+    const tool = (s as Record<string, unknown>).tool;
+    const reason = (s as Record<string, unknown>).reason;
+    return typeof tool === 'string'
+      && VALID_STEP_TOOLS.has(tool)
+      && typeof reason === 'string'
+      && reason.trim().length > 0;
   });
 }
 
@@ -807,21 +798,23 @@ export function parseResearchBrief(raw: string): ResearchBrief | null {
     const freshness_window = typeof parsed.freshness_window === 'string' ? parsed.freshness_window : null;
     if (!freshness_window || !VALID_FRESHNESS.has(freshness_window)) return null;
 
-    if (typeof parsed.fire_reddit_branch !== 'boolean') return null;
-    if (!isConceptGroupArray(parsed.concept_groups) || parsed.concept_groups.length === 0) return null;
+    const primary_branch = parsed.primary_branch;
+    if (typeof primary_branch !== 'string' || !VALID_BRANCHES.has(primary_branch as PrimaryBranch)) return null;
+
+    if (!isStepArray(parsed.first_call_sequence) || parsed.first_call_sequence.length === 0) return null;
+    if (!isStringArray(parsed.keyword_seeds) || parsed.keyword_seeds.length === 0) return null;
 
     return {
       goal_class,
       goal_class_reason: typeof parsed.goal_class_reason === 'string' ? parsed.goal_class_reason : '',
-      source_priority: isStringArray(parsed.source_priority) ? parsed.source_priority : [],
-      sources_to_deprioritize: isStringArray(parsed.sources_to_deprioritize) ? parsed.sources_to_deprioritize : [],
-      fire_reddit_branch: parsed.fire_reddit_branch,
-      fire_reddit_reason: typeof parsed.fire_reddit_reason === 'string' ? parsed.fire_reddit_reason : '',
+      primary_branch: primary_branch as PrimaryBranch,
+      primary_branch_reason: typeof parsed.primary_branch_reason === 'string' ? parsed.primary_branch_reason : '',
       freshness_window,
-      concept_groups: parsed.concept_groups,
-      anticipated_gaps: isStringArray(parsed.anticipated_gaps) ? parsed.anticipated_gaps : [],
-      first_scrape_targets: isStringArray(parsed.first_scrape_targets) ? parsed.first_scrape_targets : [],
-      success_criteria: isStringArray(parsed.success_criteria) ? parsed.success_criteria : [],
+      first_call_sequence: parsed.first_call_sequence,
+      keyword_seeds: parsed.keyword_seeds.filter((s) => s.trim().length > 0),
+      iteration_hints: isStringArray(parsed.iteration_hints) ? parsed.iteration_hints : [],
+      gaps_to_watch: isStringArray(parsed.gaps_to_watch) ? parsed.gaps_to_watch : [],
+      stop_criteria: isStringArray(parsed.stop_criteria) ? parsed.stop_criteria : [],
     };
   } catch {
     return null;
@@ -835,7 +828,12 @@ export async function generateResearchBrief(
 ): Promise<ResearchBrief | null> {
   const today = new Date().toISOString().slice(0, 10);
 
-  const prompt = `You are a research planner. An agent is about to run a multi-pass research loop on the goal below. Produce a tailored research brief in JSON.
+  const prompt = `You are a research planner. An agent is about to run a multi-pass research loop on the goal below using 3 tools:
+
+  - web-search: fan-out Google, scope: web|reddit|both, up to 50 queries per call, parallel-callable (multiple calls per turn)
+  - scrape-links: fetch URLs in parallel, auto-detects reddit.com post permalinks → Reddit API (threaded post+comments); all other URLs → HTTP scraper; parallel-callable
+
+Produce a tailored JSON brief.
 
 GOAL: ${goal}
 TODAY: ${today}
@@ -845,36 +843,45 @@ Return ONLY a JSON object (no markdown, no code fences):
 {
   "goal_class": "spec | bug | migration | sentiment | pricing | security | synthesis | product_launch | other",
   "goal_class_reason": "one sentence — why this class",
-  "source_priority": ["ordered list from: vendor_docs, changelog, github_code, github_issues, reddit, hackernews, blogs, marketing_pages, stackoverflow, cve_databases, arxiv, news, release_notes"],
-  "sources_to_deprioritize": ["same vocabulary — sources that add noise for this goal"],
-  "fire_reddit_branch": true,
-  "fire_reddit_reason": "one sentence — why yes or why no",
+  "primary_branch": "reddit | web | both",
+  "primary_branch_reason": "one sentence — why this branch leads",
   "freshness_window": "days | weeks | months | years",
-  "concept_groups": [
-    {
-      "facet": "2-4 word facet name",
-      "queries": ["5-10 concrete Google queries using operators where helpful: site:, quotes, version numbers"]
-    }
+  "first_call_sequence": [
+    { "tool": "web-search | scrape-links", "reason": "what this call establishes for the agent" }
   ],
-  "anticipated_gaps": ["2-5 things likely missing after pass 1 that the agent should watch for"],
-  "first_scrape_targets": ["domain names or URL patterns most likely to contain the answer"],
-  "success_criteria": ["2-4 concrete facts the agent must verify before declaring done"]
+  "keyword_seeds": ["25–50 concrete Google queries — flat list, to be fired in the first web-search call"],
+  "iteration_hints": ["2–5 pointers on which harvested terms / follow-up signals to watch for after pass 1"],
+  "gaps_to_watch": ["2–5 concrete questions the agent MUST verify or the answer is incomplete"],
+  "stop_criteria": ["2–4 checkable conditions — all must hold before the agent declares done"]
 }
 
-Rules:
-- Concept groups must probe DIFFERENT facets. Same noun-phrase cannot repeat across groups.
-- Queries within a group vary by operator/phrasing but probe the same facet.
-- Total queries across all groups: 25–50. Narrow bugs fewer; open synthesis more.
-- If the goal mentions a recent release / date / version, freshness_window = days or weeks.
-- Do NOT invent vendor names you are uncertain exist. Leave shaky queries out.
-- source_priority MUST reflect the goal type — docs for spec, github_issues for bugs, reddit/hackernews/blogs for migration/sentiment, cve_databases for security.
-- fire_reddit_branch should be false for CVE / pricing / API spec / primary-source lookups.`;
+RULES:
+
+primary_branch:
+- "reddit"  → sentiment / migration / lived-experience / community-consensus goals. Leads with scope:"reddit" web-search.
+- "web"     → spec / bug / pricing / CVE / API / primary-source goals. Leads with scope:"web" web-search.
+- "both"    → opinion-heavy AND needs official sources (e.g. product launch + practitioner reception).
+
+first_call_sequence:
+- 1–3 steps.
+- reddit-first: step 1 = web-search (caller sets scope:"reddit"), step 2 = scrape-links on best post permalinks.
+- web-first:    step 1 = web-search (scope:"web"), step 2 = scrape-links on HIGHLY_RELEVANT URLs.
+- both:         step 1 = two parallel web-search calls (one scope:"reddit", one scope:"web"), step 2 = merged scrape-links.
+
+keyword_seeds:
+- 25–50 total. Narrow bug → fewer. Open synthesis → more.
+- Use operators where helpful (site:, quotes, verbatim version numbers).
+- DIVERSE facets — same noun-phrase cannot repeat across seeds with adjectives-only variation.
+- Do NOT invent vendor names you are uncertain exist.
+
+freshness_window:
+- If the goal mentions a recent release / date / version, use "days" or "weeks".
+- Stable protocols / APIs → "months" or "years".`;
 
   try {
-    const response = await requestTextWithFallback(
+    const response = await requestText(
       processor,
       prompt,
-      2500,
       'Research brief generation',
       signal,
     );
@@ -908,55 +915,47 @@ export function renderResearchBrief(brief: ResearchBrief): string {
   lines.push('## Your research brief (goal-tailored)');
   lines.push('');
   lines.push(`**Goal class**: \`${brief.goal_class}\` — ${brief.goal_class_reason}`);
-  lines.push(`**Freshness target**: \`${brief.freshness_window}\``);
-  lines.push(`**Reddit branch**: ${brief.fire_reddit_branch ? '**fire**' : 'skip'} — ${brief.fire_reddit_reason}`);
+  lines.push(`**Primary branch**: \`${brief.primary_branch}\` — ${brief.primary_branch_reason}`);
+  lines.push(`**Freshness**: \`${brief.freshness_window}\``);
   lines.push('');
 
-  if (brief.source_priority.length > 0) {
-    lines.push('**Source priority** (highest → lowest):');
-    brief.source_priority.forEach((src, i) => lines.push(`${i + 1}. \`${src}\``));
+  if (brief.first_call_sequence.length > 0) {
+    lines.push('### First-call sequence');
+    brief.first_call_sequence.forEach((step, i) => {
+      lines.push(`${i + 1}. \`${step.tool}\` — ${step.reason}`);
+    });
     lines.push('');
   }
 
-  if (brief.sources_to_deprioritize.length > 0) {
-    lines.push(`**Deprioritize**: ${brief.sources_to_deprioritize.map((s) => `\`${s}\``).join(', ')}`);
-    lines.push('');
-  }
-
-  lines.push('### Pass 1 concept groups');
-  lines.push('');
-  lines.push('Issue every query below in ONE `web-search` call (flat array).');
-  lines.push('');
-
-  for (const group of brief.concept_groups) {
-    lines.push(`#### ${group.facet}`);
-    for (const query of group.queries) {
-      lines.push(`- ${query}`);
+  if (brief.keyword_seeds.length > 0) {
+    lines.push(`### Keyword seeds (${brief.keyword_seeds.length}) — fire these in your first \`web-search\` call as a flat \`queries\` array`);
+    for (const seed of brief.keyword_seeds) {
+      lines.push(`- ${seed}`);
     }
     lines.push('');
   }
 
-  if (brief.anticipated_gaps.length > 0) {
-    lines.push('### Anticipated gaps (watch the classifier\'s `gaps[]` output for these)');
-    brief.anticipated_gaps.forEach((g) => lines.push(`- ${g}`));
+  if (brief.iteration_hints.length > 0) {
+    lines.push('### Iteration hints (harvest new terms from scrape extracts\' `## Follow-up signals`)');
+    for (const hint of brief.iteration_hints) lines.push(`- ${hint}`);
     lines.push('');
   }
 
-  if (brief.first_scrape_targets.length > 0) {
-    lines.push('### First-pass scrape targets (prioritize these in `scrape-links`)');
-    brief.first_scrape_targets.forEach((t) => lines.push(`- ${t}`));
+  if (brief.gaps_to_watch.length > 0) {
+    lines.push('### Gaps to watch');
+    for (const gap of brief.gaps_to_watch) lines.push(`- ${gap}`);
     lines.push('');
   }
 
-  if (brief.success_criteria.length > 0) {
-    lines.push('### Success criteria (do not declare done until all are verified)');
-    brief.success_criteria.forEach((c) => lines.push(`- ${c}`));
+  if (brief.stop_criteria.length > 0) {
+    lines.push('### Stop criteria');
+    for (const c of brief.stop_criteria) lines.push(`- ${c}`);
     lines.push('');
   }
 
   lines.push('---');
   lines.push('');
-  lines.push('Run all concept-group queries above in ONE `web-search` call, then loop per the discipline above.');
+  lines.push('Fire `first_call_sequence` now. After each `scrape-links`, harvest new terms from `## Follow-up signals` and build your next `web-search` round. Stop when every gap is closed.');
 
   return lines.join('\n');
 }

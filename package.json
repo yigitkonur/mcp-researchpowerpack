@@ -1,7 +1,7 @@
 {
   "name": "mcp-researchpowerpack",
-  "version": "5.0.0",
-  "description": "HTTP-first MCP research server: web-search (with Reddit scope), scrape-links (chrome-stripped), get-reddit-post — built on mcp-use, deployed at research.yigitkonur.com/mcp.",
+  "version": "6.0.0",
+  "description": "HTTP-first MCP research server: start-research (goal-tailored brief), web-search (with Reddit scope), scrape-links (auto-detects Reddit URLs) — built on mcp-use.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -57,7 +57,7 @@
     "jsdom": "^29.0.2",
     "mcp-use": "1.22.0",
     "openai": "^4.77.0",
-    "redis": "^5.11.0",
+    "p-map": "^7.0.3",
     "turndown": "^7.2.2",
     "zod": "^4.3.6"
   },

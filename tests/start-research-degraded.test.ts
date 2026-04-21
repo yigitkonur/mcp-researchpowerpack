@@ -6,11 +6,10 @@ import { buildDegradedStub, buildStaticScaffolding } from '../src/tools/start-re
 test('degraded stub is dramatically shorter than full playbook', () => {
   const stub = buildDegradedStub('compare X to Y');
   const playbook = buildStaticScaffolding('compare X to Y');
-  // Stub should be roughly under 1500 chars (~375 tokens) vs ~4400 chars for the playbook.
-  assert.ok(stub.length < 1500, `expected stub <1500 chars, got ${stub.length}`);
-  assert.ok(playbook.length > 3000, `expected playbook >3000 chars, got ${playbook.length}`);
-  // Stub mentions the loop and the include_playbook escape hatch.
-  assert.match(stub, /search → scrape → verify → stop/);
+
+  assert.ok(stub.length < 2000, `expected stub <2000 chars, got ${stub.length}`);
+  assert.ok(playbook.length > 2500, `expected playbook >2500 chars, got ${playbook.length}`);
+  assert.ok(playbook.length > stub.length * 1.5, `playbook should be >=1.5x longer than stub (playbook=${playbook.length}, stub=${stub.length})`);
   assert.match(stub, /include_playbook/);
 });
 
@@ -19,10 +18,23 @@ test('degraded stub admits the planner-offline state up-front', () => {
   assert.match(stub, /LLM planner offline/);
 });
 
-test('degraded stub names Reddit branch rule succinctly', () => {
+test('degraded stub names all 3 tools', () => {
   const stub = buildDegradedStub();
-  assert.match(stub, /Reddit branch:/);
-  assert.match(stub, /sentiment|migration|lived experience/);
+  assert.match(stub, /`start-research`/);
+  assert.match(stub, /`web-search`/);
+  assert.match(stub, /`scrape-links`/);
+});
+
+test('degraded stub names the loop and Reddit-branch rule', () => {
+  const stub = buildDegradedStub();
+  assert.match(stub, /Loop/i);
+  assert.match(stub, /Reddit branch/i);
+  assert.match(stub, /sentiment|migration|lived experience/i);
+});
+
+test('degraded stub teaches parallel-callability', () => {
+  const stub = buildDegradedStub();
+  assert.match(stub, /parallel/i);
 });
 
 test('degraded stub uses focus line when goal is provided', () => {

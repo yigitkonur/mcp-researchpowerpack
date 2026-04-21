@@ -10,39 +10,34 @@ import {
 const validBriefJson = JSON.stringify({
   goal_class: 'spec',
   goal_class_reason: 'Goal asks about a documented API feature.',
-  source_priority: ['vendor_docs', 'github_code', 'release_notes'],
-  sources_to_deprioritize: ['reddit', 'blogs'],
-  fire_reddit_branch: false,
-  fire_reddit_reason: 'Spec question — docs are authoritative.',
+  primary_branch: 'web',
+  primary_branch_reason: 'Spec question — vendor docs and release notes are authoritative.',
   freshness_window: 'months',
-  concept_groups: [
-    {
-      facet: 'Official spec',
-      queries: [
-        'site:docs.ghostty.org toggle_tab_overview',
-        'ghostty keybinding reference macos',
-      ],
-    },
-    {
-      facet: 'Platform compat',
-      queries: [
-        'ghostty macos vs linux features',
-        'ghostty gtk-only actions',
-      ],
-    },
+  first_call_sequence: [
+    { tool: 'web-search', reason: 'Cover vendor docs + release notes for the feature' },
+    { tool: 'scrape-links', reason: 'Extract verbatim API signatures from HIGHLY_RELEVANT docs URLs' },
   ],
-  anticipated_gaps: ['Explicit macOS confirmation', 'Changelog entry date'],
-  first_scrape_targets: ['docs.ghostty.org', 'github.com/ghostty-org/ghostty'],
-  success_criteria: ['Confirmed macOS support or refutation', 'Source cited'],
+  keyword_seeds: [
+    'site:docs.ghostty.org toggle_tab_overview',
+    'ghostty keybinding reference macos',
+    'ghostty macos vs linux features',
+    'ghostty gtk-only actions',
+  ],
+  iteration_hints: [
+    'Watch for "macos only" / "linux only" flags in Follow-up signals',
+  ],
+  gaps_to_watch: ['Explicit macOS confirmation', 'Changelog entry date'],
+  stop_criteria: ['Confirmed macOS support or refutation', 'Source cited verbatim'],
 });
 
 test('parseResearchBrief accepts a valid JSON brief', () => {
   const brief = parseResearchBrief(validBriefJson);
   assert.notEqual(brief, null);
   assert.equal(brief!.goal_class, 'spec');
-  assert.equal(brief!.fire_reddit_branch, false);
-  assert.equal(brief!.concept_groups.length, 2);
-  assert.equal(brief!.concept_groups[0]!.facet, 'Official spec');
+  assert.equal(brief!.primary_branch, 'web');
+  assert.equal(brief!.first_call_sequence.length, 2);
+  assert.equal(brief!.first_call_sequence[0]!.tool, 'web-search');
+  assert.equal(brief!.keyword_seeds.length, 4);
 });
 
 test('parseResearchBrief tolerates wrapping code fences', () => {
@@ -63,27 +58,39 @@ test('parseResearchBrief rejects unknown goal_class', () => {
   assert.equal(parseResearchBrief(JSON.stringify(bad)), null);
 });
 
-test('parseResearchBrief rejects missing concept_groups', () => {
+test('parseResearchBrief rejects unknown primary_branch', () => {
   const bad = JSON.parse(validBriefJson);
-  delete bad.concept_groups;
+  bad.primary_branch = 'hackernews';
   assert.equal(parseResearchBrief(JSON.stringify(bad)), null);
 });
 
-test('parseResearchBrief rejects empty concept_groups', () => {
+test('parseResearchBrief rejects empty first_call_sequence', () => {
   const bad = JSON.parse(validBriefJson);
-  bad.concept_groups = [];
+  bad.first_call_sequence = [];
   assert.equal(parseResearchBrief(JSON.stringify(bad)), null);
 });
 
-test('parseResearchBrief rejects concept groups with empty queries[]', () => {
+test('parseResearchBrief rejects first_call_sequence step with unknown tool', () => {
   const bad = JSON.parse(validBriefJson);
-  bad.concept_groups[0].queries = [];
+  bad.first_call_sequence = [{ tool: 'get-reddit-post', reason: 'legacy' }];
   assert.equal(parseResearchBrief(JSON.stringify(bad)), null);
 });
 
-test('parseResearchBrief rejects concept groups with blank facet', () => {
+test('parseResearchBrief rejects first_call_sequence step with empty reason', () => {
   const bad = JSON.parse(validBriefJson);
-  bad.concept_groups[0].facet = '   ';
+  bad.first_call_sequence = [{ tool: 'web-search', reason: '   ' }];
+  assert.equal(parseResearchBrief(JSON.stringify(bad)), null);
+});
+
+test('parseResearchBrief rejects missing keyword_seeds', () => {
+  const bad = JSON.parse(validBriefJson);
+  delete bad.keyword_seeds;
+  assert.equal(parseResearchBrief(JSON.stringify(bad)), null);
+});
+
+test('parseResearchBrief rejects empty keyword_seeds', () => {
+  const bad = JSON.parse(validBriefJson);
+  bad.keyword_seeds = [];
   assert.equal(parseResearchBrief(JSON.stringify(bad)), null);
 });
 
@@ -93,32 +100,42 @@ test('parseResearchBrief rejects invalid freshness_window', () => {
   assert.equal(parseResearchBrief(JSON.stringify(bad)), null);
 });
 
-test('parseResearchBrief rejects non-boolean fire_reddit_branch', () => {
-  const bad = JSON.parse(validBriefJson);
-  bad.fire_reddit_branch = 'yes';
-  assert.equal(parseResearchBrief(JSON.stringify(bad)), null);
-});
-
 test('renderResearchBrief emits expected section headings and content', () => {
   const brief = parseResearchBrief(validBriefJson) as ResearchBrief;
   const md = renderResearchBrief(brief);
 
   assert.match(md, /## Your research brief \(goal-tailored\)/);
   assert.match(md, /\*\*Goal class\*\*: `spec`/);
-  assert.match(md, /\*\*Freshness target\*\*: `months`/);
-  assert.match(md, /\*\*Reddit branch\*\*: skip/);
-  assert.match(md, /### Pass 1 concept groups/);
-  assert.match(md, /#### Official spec/);
-  assert.match(md, /#### Platform compat/);
+  assert.match(md, /\*\*Primary branch\*\*: `web`/);
+  assert.match(md, /\*\*Freshness\*\*: `months`/);
+  assert.match(md, /### First-call sequence/);
+  assert.match(md, /1\. `web-search`/);
+  assert.match(md, /2\. `scrape-links`/);
+  assert.match(md, /### Keyword seeds \(4\)/);
   assert.match(md, /site:docs.ghostty.org toggle_tab_overview/);
-  assert.match(md, /### Anticipated gaps/);
-  assert.match(md, /### First-pass scrape targets/);
-  assert.match(md, /### Success criteria/);
+  assert.match(md, /### Iteration hints/);
+  assert.match(md, /### Gaps to watch/);
+  assert.match(md, /### Stop criteria/);
 });
 
-test('renderResearchBrief marks Reddit fire=true correctly', () => {
+test('renderResearchBrief handles primary_branch=reddit', () => {
   const brief = parseResearchBrief(validBriefJson) as ResearchBrief;
-  const fireBrief: ResearchBrief = { ...brief, fire_reddit_branch: true, fire_reddit_reason: 'migration story' };
-  const md = renderResearchBrief(fireBrief);
-  assert.match(md, /\*\*Reddit branch\*\*: \*\*fire\*\* — migration story/);
+  const redditBrief: ResearchBrief = {
+    ...brief,
+    primary_branch: 'reddit',
+    primary_branch_reason: 'migration story — practitioners are authoritative',
+  };
+  const md = renderResearchBrief(redditBrief);
+  assert.match(md, /\*\*Primary branch\*\*: `reddit` — migration story/);
+});
+
+test('renderResearchBrief handles primary_branch=both', () => {
+  const brief = parseResearchBrief(validBriefJson) as ResearchBrief;
+  const bothBrief: ResearchBrief = {
+    ...brief,
+    primary_branch: 'both',
+    primary_branch_reason: 'launch needs official spec + practitioner reception',
+  };
+  const md = renderResearchBrief(bothBrief);
+  assert.match(md, /\*\*Primary branch\*\*: `both`/);
 });

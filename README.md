@@ -1,6 +1,6 @@
 # mcp-researchpowerpack
 
-HTTP MCP server for research. Orientation-first search, Reddit mining, and scraping — all over `/mcp`.
+HTTP MCP server for research. Three tools, orientation-first, built for agents that run multi-pass research loops.
 
 Built on [mcp-use](https://github.com/nicepkg/mcp-use). No stdio, HTTP only.
 
@@ -8,24 +8,15 @@ Built on [mcp-use](https://github.com/nicepkg/mcp-use). No stdio, HTTP only.
 
 | tool | what it does | needs |
 |------|-------------|-------|
-| `start-research` | one-time orientation step that unlocks the research workflow for the current conversation/session. Emits the companion `run-research` skill install hint on every boot. | none |
-| `web-search` | parallel Google search across 1–100 queries with URL aggregation, hostname-heuristic `source_type` tagging, and follow-up suggestions. `scope: "reddit"` filters to post permalinks (subreddit homepages dropped). `verbose: true` restores per-row metadata + Signals block. | `SERPER_API_KEY` |
-| `get-reddit-post` | fetch 1–100 Reddit posts with full comment trees. Returns `isError: true` when every URL fails. | `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` |
-| `scrape-links` | scrape 1–100 URLs with optional LLM extraction. HTML chrome stripped server-side via Readability. Reddit URLs are rejected with `UNSUPPORTED_URL_TYPE` — use `get-reddit-post`. | `SCRAPEDO_API_KEY` |
+| `start-research` | returns a goal-tailored brief: `primary_branch` (reddit / web / both), exact `first_call_sequence`, 25–50 keyword seeds, iteration hints, gaps to watch, stop criteria. Call FIRST every session. | `LLM_API_KEY` (brief generation) |
+| `web-search` | parallel Google search, up to 50 queries per call, parallel-callable across turns. `scope: "web" \| "reddit" \| "both"` — reddit mode filters to post permalinks. Returns tiered markdown (HIGHLY_RELEVANT / MAYBE_RELEVANT / OTHER) + grounded synthesis + gaps + refine suggestions. | `SERPER_API_KEY` |
+| `scrape-links` | fetch URLs in parallel with per-URL LLM extraction. Auto-detects `reddit.com/r/.../comments/` permalinks and routes them through the Reddit API (threaded post + comments); every other URL flows through the HTTP scraper. Parallel-callable. | `SCRAPEDO_API_KEY` (+ `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` for reddit URLs) |
 
 Also exposes `/health`, `health://status`, and two optional MCP prompts: `deep-research` and `reddit-sentiment`.
 
 ## workflow
 
-Call `start-research` once at the beginning of each conversation/session.
-
-It returns the orientation brief that teaches how to route between:
-
-- `web-search` (with `scope: "web" | "reddit" | "both"`)
-- `get-reddit-post`
-- `scrape-links`
-
-All three gated tools advertise this precondition via `_meta.requires: ["start-research"]` in `tools/list`, so capability-aware clients can skip pre-bootstrap calls.
+Call `start-research` once at the beginning of each session with your goal. The server returns a brief that tells the agent exactly which tool to call first (reddit-first for sentiment/migration, web-first for spec/bug/pricing, both when opinion-heavy AND needs official sources), what keyword seeds to fire, and when to stop.
 
 Pair the server with the [`run-research`](https://github.com/yigitkonur/skills-by-yigitkonur/tree/main/skills/run-research) skill for the full agentic playbook:
 
@@ -69,29 +60,27 @@ Copy `.env.example`, set only what you need. Missing keys don't crash the server
 | `HOST` | `127.0.0.1` | bind address |
 | `ALLOWED_ORIGINS` | unset | comma-separated origins for host validation |
 | `MCP_URL` | unset | fallback public MCP URL used by the production origin-protection guard |
-| `REDIS_URL` | unset | Redis-backed MCP sessions, distributed SSE, and workflow state |
 
 ### providers
 
 | var | enables |
 |-----|---------|
-| `SERPER_API_KEY` | `web-search` (open web + `scope: "reddit"`) |
-| `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` | `get-reddit-post` |
-| `SCRAPEDO_API_KEY` | `scrape-links` |
-| `LLM_API_KEY` | AI extraction, search classification, and raw-mode refine suggestions |
+| `SERPER_API_KEY` | `web-search` (all scopes) |
+| `SCRAPEDO_API_KEY` | `scrape-links` for non-reddit URLs |
+| `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` | `scrape-links` for reddit.com permalinks (threaded post + comments) |
+| `LLM_API_KEY` | goal-tailored brief, AI extraction, search classification, raw-mode refine suggestions |
 
 ### llm (AI extraction + classification)
 
-Any OpenAI-compatible provider works — OpenRouter, Cerebras, Together, etc.
+Any OpenAI-compatible endpoint — OpenRouter, OpenAI, Cerebras, Together, etc. All three vars are required together.
 
-| var | default | |
-|-----|---------|---|
-| `LLM_API_KEY` | *(required for LLM features)* | API key for the LLM provider |
-| `LLM_BASE_URL` | `https://openrouter.ai/api/v1` | base URL |
-| `LLM_MODEL` | `openai/gpt-5.4-mini` | model identifier |
-| `LLM_MAX_TOKENS` | `8000` | max output tokens |
-| `LLM_REASONING` | `low` | `none` \| `low` \| `medium` \| `high` |
-| `LLM_CONCURRENCY` | `50` | parallel LLM calls |
+| var | required? | |
+|-----|-----------|---|
+| `LLM_API_KEY` | yes (for LLM features) | API key for the provider |
+| `LLM_BASE_URL` | yes (for LLM features) | e.g. `https://openrouter.ai/api/v1`, `https://api.openai.com/v1`, `https://api.cerebras.ai/v1` |
+| `LLM_MODEL` | yes (for LLM features) | model identifier your endpoint accepts |
+| `LLM_REASONING` | no (default `none`) | `none` \| `low` \| `medium` \| `high` — opt-in per endpoint support |
+| `LLM_CONCURRENCY` | no (default `50`) | parallel LLM calls |
 
 ### evals
 
@@ -139,32 +128,27 @@ src/
   clients/               provider API clients (serper, reddit, scrapedo)
   prompts/               optional MCP prompts for deep-research and reddit-sentiment
   tools/
-    registry.ts          registerAllTools() — wires tools to MCP server
-    start-research.ts    workflow orientation entrypoint
-    search.ts            web-search handler
-    reddit.ts            get-reddit-post
-    scrape.ts            scrape-links handler
+    registry.ts          registerAllTools() — wires 3 tools + 2 prompts
+    start-research.ts    goal-tailored brief + static playbook
+    search.ts            web-search handler (with CTR-weighted URL aggregation + LLM classification)
+    scrape.ts            scrape-links handler (reddit + web branches in parallel)
     mcp-helpers.ts       response builders (markdown + structured MCP output)
-    utils.ts             shared formatters, token budget allocation
+    utils.ts             shared formatters
   services/
-    workflow-state.ts    conversation-aware workflow state with memory/Redis backends
-    llm-processor.ts     AI extraction/synthesis via OpenAI-compatible API
+    llm-processor.ts     AI extraction, classification, brief generation via OpenAI-compatible API
     markdown-cleaner.ts  HTML/markdown cleanup
   schemas/               zod v4 input validation per tool
   utils/
-    workflow-key.ts      workflow identity derivation from user/session context
-    bootstrap-guard.ts   hard gate enforcing start-research first
-    reddit-keyword-guard.ts  one-shot redirect for reddit-first web-search misuse
     sanitize.ts          strips URL/control-char injection from follow-up suggestions
     errors.ts            structured error codes (retryable classification)
-    concurrency.ts       pMap/pMapSettled — bounded parallel execution
+    concurrency.ts       pMap/pMapSettled — thin wrappers over p-map@7
     retry.ts             exponential backoff with jitter
     url-aggregator.ts    CTR-weighted URL ranking for search consensus
     response.ts          formatSuccess/formatError/formatBatchHeader
     logger.ts            mcpLog() — stderr-only (MCP-safe)
 ```
 
-Key patterns: capability detection at startup, conversation-aware workflow gating via `start-research`, always-on structured MCP tool output, raw and classified follow-up guidance in `web-search`, bounded concurrency, CTR-based URL ranking, tools never throw (always return `toolFailure`), and structured errors with retry classification.
+Key patterns: capability detection at startup, description-led tool routing (no bootstrap gate), always-on structured MCP tool output, tiered classified output in `web-search`, parallel reddit + web branches in `scrape-links`, bounded concurrency via `p-map`, CTR-based URL ranking, tools never throw (always return `toolFailure`), and structured errors with retry classification.
 
 ## license
 

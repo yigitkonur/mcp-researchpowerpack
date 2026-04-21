@@ -40,8 +40,6 @@ import {
   type ToolExecutionResult,
   type ToolReporter,
 } from './mcp-helpers.js';
-import { requireBootstrap } from '../utils/bootstrap-guard.js';
-import { redditKeywordGuard } from '../utils/reddit-keyword-guard.js';
 import { sanitizeSuggestion } from '../utils/sanitize.js';
 
 // --- Internal types ---
@@ -534,7 +532,7 @@ export function registerWebSearchTool(server: MCPServer): void {
       name: 'web-search',
       title: 'Web Search',
       description:
-        'Fan out many Google searches in parallel (no hard cap), aggregate and deduplicate results, then classify each URL against your extract goal. Returns a tiered Markdown report: HIGHLY_RELEVANT / MAYBE_RELEVANT / OTHER with source_type and a per-result reason; plus a grounded synthesis with rank citations, a domain-independence confidence, a `## Gaps` list of what the current results do not answer, and `## Suggested follow-up searches` tied to gap ids (non-paraphrases of your prior queries). Think of `queries` as concept groups — diverse facets, not paraphrases. Set `raw=true` to skip classification and get an unclassified ranked list.',
+        'Fan out Google queries in parallel. One call carries up to 50 queries in a flat `queries` array — pack diverse facets (not paraphrases) into a single call. Call me AGGRESSIVELY across a session: 2–4 rounds is normal, 1 is underuse. After each pass, read `gaps[]` + `refine_queries[]` and fire another round with the new terms. Safe to call multiple times in parallel in the same turn for orthogonal subtopics. `scope`: `"reddit"` (server appends `site:reddit.com` + filters to post permalinks — use for sentiment / migration / lived experience), `"web"` default (spec / bug / pricing / CVE / API), `"both"` (fan each query across both — use when opinion-heavy AND needs official sources). Returns a tiered Markdown report (HIGHLY_RELEVANT / MAYBE_RELEVANT / OTHER) + grounded synthesis with `[rank]` citations + `## Gaps` + `## Suggested follow-up searches` tied to gap ids. Set `raw=true` to skip classification.',
       schema: webSearchParamsSchema,
       outputSchema: webSearchOutputSchema,
       annotations: {
@@ -542,34 +540,11 @@ export function registerWebSearchTool(server: MCPServer): void {
         idempotentHint: true,
         destructiveHint: false,
         openWorldHint: true,
-        // Non-standard precondition hint. mcp-use's ToolAnnotations type
-        // does not expose `experimental` natively (the SDK schema uses
-        // $strip) but the runtime forwards the whole annotations object
-        // verbatim. Cast keeps TS happy. See:
-        //   docs/code-review/context/04-session-and-workflow-state.md
-        //   mcp-revisions/contract-fixes/03-precondition-annotation-on-gated-tools.md
-        ...({ experimental: { requires: ['start-research'] } } as Record<string, unknown>),
       },
-      _meta: { requires: ['start-research'] },
     },
     async (args, ctx) => {
       if (!getCapabilities().search) {
         return toToolResponse(toolFailure(getMissingEnvMessage('search')));
-      }
-
-      const guard = await requireBootstrap(ctx);
-      if (guard) {
-        return guard;
-      }
-
-      // The keyword guard is only relevant for scope=web — when the caller
-      // explicitly asked for the reddit scope, "reddit" in the query is
-      // intentional context, not a tool-choice mistake.
-      if (args.scope === 'web') {
-        const redditGuard = await redditKeywordGuard(ctx, args.queries);
-        if (redditGuard) {
-          return redditGuard;
-        }
       }
 
       const reporter = createToolReporter(ctx, 'web-search');

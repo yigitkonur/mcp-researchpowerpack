@@ -6,22 +6,17 @@ import {
   type StartResearchOutput,
   type StartResearchParams,
 } from '../schemas/start-research.js';
-import { getWorkflowStateStore } from '../services/workflow-state.js';
 import {
   createLLMProcessor,
   generateResearchBrief,
   getLLMHealth,
   renderResearchBrief,
 } from '../services/llm-processor.js';
+import { classifyError } from '../utils/errors.js';
+import { mcpLog } from '../utils/logger.js';
+import { toolFailure, toolSuccess, toToolResponse, type ToolExecutionResult } from './mcp-helpers.js';
+import { formatError } from './utils.js';
 
-/**
- * The MCP server is the toolbelt; the `run-research` skill is the discipline
- * that teaches an agent to spend the tools well (single-agent loop,
- * multi-agent orchestrator, mission templates, output discipline). Without
- * the skill, an agent has to rediscover the workflow from this scaffolding
- * alone — which it will do, but worse and slower. Surface the install hint
- * once on every session-boot so it is impossible to miss on first contact.
- */
 const SKILL_INSTALL_HINT = [
   '> 💡 **Pair this server with the `run-research` skill** for the full agentic playbook',
   '> (single-agent loop, multi-agent orchestrator, mission-prompt templates, output discipline).',
@@ -34,106 +29,78 @@ const SKILL_INSTALL_HINT = [
   '> Already installed? Skip this — the skill auto-loads on relevant prompts. The full pack',
   '> ships ~50 sibling skills: `npx -y skills add -y -g yigitkonur/skills-by-yigitkonur`.',
 ].join('\n');
-import { buildWorkflowKey } from '../utils/workflow-key.js';
-import { classifyError } from '../utils/errors.js';
-import { mcpLog } from '../utils/logger.js';
-import { toolFailure, toolSuccess, toToolResponse, type ToolExecutionResult } from './mcp-helpers.js';
-import { formatError } from './utils.js';
 
+/**
+ * Full research-loop playbook. Teaches the 3-tool mental model
+ * (start-research, web-search, scrape-links), the aggressive multi-call
+ * discipline, parallel-callability, and the cite-from-scrape rule.
+ *
+ * Emitted when the LLM planner is healthy OR `include_playbook: true`.
+ */
 export function buildStaticScaffolding(goal?: string, opts: { plannerAvailable?: boolean } = {}): string {
   const plannerAvailable = opts.plannerAvailable ?? true;
   const focusLine = goal
     ? `> Focus for this session: ${goal}`
     : '> Focus for this session: not yet specified — set one on the next pass';
 
-  // The classifier output (synthesis / gaps / refine_queries) only exists
-  // when the LLM planner is reachable. When it's not, do not promise it —
-  // instead tell the agent the loop runs on raw URL lists.
-  // See: docs/code-review/context/03-llm-degradation-paths.md
-  //      mcp-revisions/llm-degradation/02-drop-synthesis-promise-when-offline.md
-  const loopReadStep = plannerAvailable
-    ? '2. **Read the classifier output**: `synthesis` (terrain), `gaps` (what\'s missing, with ids), `refine_queries` (follow-ups tied to gap ids).'
-    : '2. **No classifier output is available** in this mode (LLM planner offline). The web-search response is the raw ranked URL list — synthesize the terrain yourself from titles + snippets. Use `web-search` `scope: "reddit"` for sentiment/migration; `scrape-links` for primary sources.';
+  const classifierLoopStep = plannerAvailable
+    ? '3. Read the classifier output: `synthesis` (citations in `[rank]`), `gaps[]` (with ids), `refine_queries[]` (follow-ups tied to gap ids).'
+    : '3. Classifier output is NOT available (LLM planner offline). `web-search` returns a raw ranked list — synthesize the terrain yourself from titles + snippets.';
 
   return [
     '# Research session started',
     '',
     SKILL_INSTALL_HINT,
     '',
-    'You are running a research LOOP, not answering from memory. Training data is stale; the web is authoritative for anything dated, versioned, priced, or contested. Every claim in your final answer must be traceable to a scraped page or expanded Reddit thread. Never cite a URL from a search snippet alone — only from a `scrape-links` excerpt you actually read.',
-    '',
     focusLine,
     '',
-    '## Concept groups — the core mental model',
+    'You are running a research LOOP, not answering from memory. Training data is stale; the web is authoritative for anything dated, versioned, priced, or contested. Every non-trivial claim in your final answer must be traceable to a `scrape-links` excerpt you read. Never cite a URL from a `web-search` snippet alone.',
     '',
-    'A concept group is a cluster of semantically related queries that all probe the SAME facet of the goal. Different concept groups probe DIFFERENT facets. They must not overlap — if two groups share a core noun-phrase and differ only in adjectives, collapse them.',
+    '## The 3 tools',
     '',
-    '**Sizing**: roughly ~100 words of queries per group (5–10 short queries, or 4–6 longer ones). Total concept-group count matches goal complexity, not a fixed range:',
-    '- Narrow technical bug → 2–3 groups',
-    '- Comparison / pricing → 4–6 groups',
-    '- Open-ended synthesis → 8+ groups',
+    '**1. `start-research`** — you just called me. I plan this session and return the brief below. Call me again only if the goal materially shifts.',
     '',
-    '**Axis menu** (pick the axes the goal demands; invent new axes when needed — this is not a checklist):',
-    '- Official spec / vendor docs',
-    '- Source / implementation (GitHub code, RFCs)',
-    '- Platform / compatibility gap',
-    '- Failure / bug reports',
-    '- Community sentiment / lived experience',
-    '- Changelog / release notes / recent changes',
-    '- Pricing / tier limits / enterprise',
-    '- Security advisories / CVE databases',
-    '- Academic / arxiv / benchmark papers',
-    '- Regulatory filings / compliance',
+    '**2. `web-search`** — fan out Google queries in parallel. One call carries **up to 50 queries** in a flat `queries` array. Call me **aggressively** — 2–4 rounds per session is normal, not 1. After each pass, read `gaps[]` and `refine_queries[]` and fire another round with the harvested terms. **Parallel-safe**: run multiple `web-search` calls in the same turn for orthogonal subtopics (e.g. one call for "spec" queries, one call for "sentiment" queries). `scope` values:',
+    '- `"reddit"` → server appends `site:reddit.com` and filters to post permalinks. Use for sentiment / migration / lived experience.',
+    '- `"web"` (default) → open web. Use for spec / bug / pricing / CVE / API / primary-source hunts.',
+    '- `"both"` → fans each query across both. Use when the topic is opinion-heavy AND needs official sources.',
     '',
-    '**Fire all concept groups in ONE `web-search` call** (flat array of queries). The classifier dedupes and ranks across groups.',
+    '**3. `scrape-links`** — fetch URLs in parallel and run per-URL LLM extraction. **Auto-detects** `reddit.com/r/.../comments/` permalinks and routes them through the Reddit API (threaded post + comments); everything else flows through the HTTP scraper. Mix Reddit + web URLs freely — both branches run concurrently. **Parallel-safe**: prefer multiple `scrape-links` calls with contextually grouped URLs over one giant mixed batch. Each page returns `## Source`, `## Matches` (verbatim facts), `## Not found` (explicit gaps this page did NOT answer), `## Follow-up signals` (new terms + referenced-but-unscraped URLs that seed your next `web-search` round). Describe extraction SHAPE in `extract`, facets separated by `|`: `root cause | affected versions | fix | workarounds | timeline`.',
     '',
-    '## The research loop',
+    '## The loop',
     '',
-    '1. **Produce concept groups → fire `web-search` once** (all groups\' queries concatenated into the flat array).',
-    loopReadStep,
-    '3. **Scrape with `scrape-links`**: every HIGHLY_RELEVANT plus the 2–3 best MAYBE_RELEVANT. One batched call. Treat `extract` as a **semantic instruction** — describe the SHAPE of what you want, not exact words to match. Use `|` to separate facets. Good: `root cause | affected versions | fix | workarounds | timeline`.',
-    '4. **Read every scrape excerpt** — extract new terms, version numbers, vendor names, failure modes from the `## Follow-up signals` section of each extract. These seed the next-pass concept groups.',
-    '5. **Next pass: close the gaps.** Build new concept groups targeting each `gaps[]` item. Do not repeat a group unless pass 1 returned fewer than 3 distinct HIGHLY_RELEVANT sources for it.',
-    '6. **Stop when**: (a) every gap is closed AND no new terms appeared in the last pass, OR (b) you have run 4 passes — whichever comes first. State remaining gaps explicitly if you hit the cap.',
-    '',
-    '## Reddit branch — fire ONLY when the goal is about',
-    '',
-    '- Sentiment / developer reception',
-    '- Migration stories / "we moved from X to Y"',
-    '- Lived experience / production war stories',
-    '- Community consensus on an opinion-heavy topic',
-    '',
-    '**Do NOT fire Reddit for**: CVE lookups, API spec questions, pricing pages, primary-source documentation hunts. Reddit adds noise on these.',
-    '',
-    'When firing: call `web-search` with `scope: "reddit"` (server filters to post permalinks; no client-side regex needed) → then `get-reddit-post` on the 3–10 strongest threads. Never cite a Reddit thread you have not expanded with `get-reddit-post`.',
-    '',
-    '## Post-cutoff entity discipline',
-    '',
-    'For anything released or changed after your training cutoff — new products, versions, prices, benchmarks — **treat your own query suggestions as hypotheses until confirmed by a scraped first-party page**. One concept group for vendor/product goals MUST be `site:<vendor-domain>` queries.',
+    '1. Read the brief below (if present). Note `primary_branch`, `keyword_seeds`, `gaps_to_watch`, `stop_criteria`.',
+    '2. Fire `first_call_sequence` in order. For `primary_branch: reddit`, lead with `web-search scope:"reddit"` → `scrape-links` on the best post permalinks. For `web`, lead with `web-search scope:"web"` → `scrape-links` on HIGHLY_RELEVANT URLs. For `both`, issue two parallel `web-search` calls (one per scope) in the same turn, then one merged `scrape-links`.',
+    classifierLoopStep,
+    '4. Scrape every HIGHLY_RELEVANT plus the 2–3 best MAYBE_RELEVANT. Group URLs into parallel `scrape-links` calls when contexts differ (e.g. one call for docs, one for reddit threads).',
+    '5. Harvest from each scrape extract\'s `## Follow-up signals` — new terms, version numbers, vendor names, failure modes, referenced URLs. These seed your next `web-search` round.',
+    '6. Fire the next `web-search` round with the harvested terms plus any `refine_queries[]` the classifier suggested. Do NOT paraphrase queries already run — the classifier tracks them.',
+    '7. **Stop** when every `gaps_to_watch` item is closed AND the last `web-search` pass surfaced no new terms, OR when you have completed 4 full passes. State remaining gaps explicitly if you hit the cap.',
     '',
     '## Output discipline',
     '',
-    '- Cite URL (or Reddit thread permalink) for every non-trivial claim.',
-    '- Separate **documented facts** from **inferred conclusions** explicitly.',
-    '- Include the date you scraped time-sensitive claims.',
+    '- Cite URL (or Reddit permalink) for every non-trivial claim — only from a `scrape-links` excerpt you read.',
+    '- Quote verbatim: numbers, versions, API names, prices, error messages, stacktraces, people\'s words.',
+    '- Separate documented facts from inferred conclusions explicitly.',
+    '- Include the scrape date for time-sensitive claims.',
     '- If you could not verify something, say so — do not paper over gaps.',
-    '- Never cite a URL from a search snippet — only from a scrape excerpt you read.',
+    '- Never cite a URL from a search snippet alone.',
+    '',
+    '## Post-cutoff discipline',
+    '',
+    'For anything released / changed after your training cutoff — new products, versions, prices, benchmarks — treat your own query suggestions as hypotheses until a scraped first-party page confirms them. Include `site:<vendor-domain>` queries in your first `web-search` call when the goal names a vendor or product.',
   ].join('\n');
 }
 
 /**
- * Compact ~300-token stub for the LLM-planner-offline case. Names the loop,
- * the Reddit branch rule, and the cite-from-scrape discipline — enough to
- * keep an agent moving without the full ~1100-token playbook. Pass
- * `include_playbook: true` to get the full scaffolding even when degraded.
- *
- * See: docs/code-review/context/02-current-tool-surface.md (E1) for the
- * 4426-char baseline this replaces, and mcp-revisions/output-shaping/04.
+ * Compact stub emitted when the LLM planner is offline AND the caller did
+ * not opt into the full playbook. Names the 3 tools, the loop, parallel-safety,
+ * Reddit branch, and cite-from-scrape — enough to keep an agent moving.
  */
 export function buildDegradedStub(goal?: string): string {
   const focusLine = goal
     ? `> Focus for this session: ${goal}`
-    : '> Focus: not specified — set one on the next pass.';
+    : '> Focus for this session: not specified — set one on the next pass.';
   return [
     '# Research session started (LLM planner offline — compact stub)',
     '',
@@ -141,24 +108,20 @@ export function buildDegradedStub(goal?: string): string {
     '',
     focusLine,
     '',
-    'Loop: **search → scrape → verify → stop.** Fire concept groups in parallel via `web-search` (one call, flat array). Cite every non-trivial claim from a `scrape-links` excerpt — never from a search snippet alone.',
+    '**3 tools**: `start-research` (plans), `web-search` (Google fan-out, up to 50 queries/call, `scope: web|reddit|both`), `scrape-links` (fetch URLs in parallel, auto-detects `reddit.com/r/.../comments/` permalinks → Reddit API; all other URLs → HTTP scraper). All three are **parallel-callable** — fire multiple in the same turn when subtopics are orthogonal.',
     '',
-    'Reddit branch: only for sentiment / migration stories / lived experience. Skip for CVE, API specs, pricing pages.',
+    '**Loop**: `web-search` → `scrape-links` → read `## Follow-up signals` → harvest new terms → next `web-search` round → stop when gaps close OR after 4 passes. Call `web-search` aggressively (2–4 rounds, not 1).',
     '',
-    'Worked example — "alternatives to LiteLLM for proxy use":',
-    '→ `web-search` queries: ["litellm alternatives proxy 2026", "openrouter vs portkey", "llm gateway comparison"]',
-    '→ `scrape-links` on the top 3-5 comparison articles',
-    '→ `web-search` again with reddit-shaped queries for practitioner stories',
-    '→ `get-reddit-post` on the 3-10 strongest threads',
+    '**Reddit branch**: use `web-search scope:"reddit"` for sentiment / migration / lived experience. Skip for CVE / API spec / pricing. Reddit permalinks go straight into `scrape-links` for threaded post + comments.',
     '',
-    'Pass `include_playbook: true` to `start-research` for the full ~1100-token tactic reference.',
+    '**Cite**: every non-trivial claim must trace to a `scrape-links` excerpt, never a search snippet. Quote verbatim for numbers, versions, stacktraces, people\'s words.',
+    '',
+    'Pass `include_playbook: true` to `start-research` for the full tactic reference.',
   ].join('\n');
 }
 
 /**
- * Backward-compat alias — older tests import `buildOrientation` directly.
- * New code should use `buildStaticScaffolding` (sync) for the static part,
- * and the full `handleStartResearch` handler for the goal-aware version.
+ * Backward-compat alias — older call sites import `buildOrientation` directly.
  */
 export const buildOrientation = buildStaticScaffolding;
 
@@ -183,23 +146,9 @@ async function buildGoalAwareBrief(
 
 async function handleStartResearch(
   params: StartResearchParams,
-  workflowKey: string,
   signal?: AbortSignal,
 ): Promise<ToolExecutionResult<StartResearchOutput>> {
   try {
-    const store = getWorkflowStateStore();
-
-    // Always unlock the session first — bootstrap gate must not depend on LLM availability.
-    await store.patch(workflowKey, {
-      bootstrapped: true,
-      bootstrappedAt: new Date().toISOString(),
-    });
-
-    // When the LLM planner is offline AND the caller did not opt-in to the
-    // full playbook, emit the compact degraded stub. Saves ~800 tokens per
-    // session-boot in the steady state.
-    // See: docs/code-review/context/03-llm-degradation-paths.md
-    //      mcp-revisions/output-shaping/04.
     const llmHealth = getLLMHealth();
     const plannerKnownOffline = !llmHealth.plannerConfigured
       || (llmHealth.lastPlannerCheckedAt !== null && !llmHealth.lastPlannerOk);
@@ -209,8 +158,6 @@ async function handleStartResearch(
       return toolSuccess(stub, { content: stub });
     }
 
-    // include_playbook: true OR planner is healthy → emit the full scaffolding,
-    // but route the classifier-output promise based on the actual planner state.
     const scaffolding = buildStaticScaffolding(params.goal, {
       plannerAvailable: !plannerKnownOffline,
     });
@@ -220,8 +167,6 @@ async function handleStartResearch(
       brief = await buildGoalAwareBrief(params.goal, signal);
     }
 
-    // If a goal was provided but the brief is empty, tell the caller why — otherwise
-    // they cannot distinguish "no goal" from "goal-aware planner failed."
     const briefFallbackNote = params.goal && !brief
       ? '\n\n---\n\n> _Goal-tailored brief unavailable: LLM planner is not configured or failed this call. The static playbook above still applies; you can proceed with it, or retry `start-research` after verifying `LLM_API_KEY`._'
       : '';
@@ -240,7 +185,7 @@ async function handleStartResearch(
         message: structuredError.message,
         retryable: structuredError.retryable,
         toolName: 'start-research',
-        howToFix: ['Retry start-research. If the failure persists, verify the workflow-state store (Redis) and LLM_API_KEY.'],
+        howToFix: ['Retry start-research. If the failure persists, verify LLM_API_KEY / LLM_BASE_URL / LLM_MODEL.'],
       }),
     );
   }
@@ -252,7 +197,7 @@ export function registerStartResearchTool(server: MCPServer): void {
       name: 'start-research',
       title: 'Start Research Session',
       description:
-        'MANDATORY first call for every research session. Returns a goal-tailored research brief — initial concept groups, source-type priorities, anticipated gaps, and success criteria customized to your specific goal — plus the full research loop playbook (concept-group mental model, scrape discipline, Reddit branch rules, output discipline). Provide a `goal` to get the tailored brief; without one you get the generic playbook. Other tools are gated until this is called.',
+        'Call this FIRST every research session. Provide a `goal`; I return a goal-tailored brief naming (a) `primary_branch` (reddit for sentiment/migration, web for spec/bug/pricing, both when opinion-heavy AND needs official sources), (b) the exact `first_call_sequence` of web-search + scrape-links calls to fire, (c) 25–50 keyword seeds for your first `web-search` call, (d) iteration hints, (e) gaps to watch, (f) stop criteria. No goal? You still get the generic 3-tool playbook. Other tools work without calling this, but you will use them worse.',
       schema: startResearchParamsSchema,
       outputSchema: startResearchOutputSchema,
       annotations: {
@@ -262,6 +207,6 @@ export function registerStartResearchTool(server: MCPServer): void {
         openWorldHint: false,
       },
     },
-    async (args, ctx) => toToolResponse(await handleStartResearch(args, buildWorkflowKey(ctx))),
+    async (args) => toToolResponse(await handleStartResearch(args)),
   );
 }

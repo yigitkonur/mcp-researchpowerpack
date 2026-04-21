@@ -173,31 +173,29 @@ export const CTR_WEIGHTS: Record<number, number> = {
 // LLM Configuration
 //
 // Env var naming: LLM_* (canonical) with backwards-compatible fallbacks.
+// LLM_API_KEY + LLM_BASE_URL + LLM_MODEL are all required together — no defaults.
 // Fallback chain per variable:
 //   LLM_API_KEY      ← LLM_EXTRACTION_API_KEY  ← OPENROUTER_API_KEY
-//   LLM_BASE_URL     ← LLM_EXTRACTION_BASE_URL ← OPENROUTER_BASE_URL  ← default
-//   LLM_MODEL        ← LLM_EXTRACTION_MODEL                           ← default
-//   LLM_MAX_TOKENS   ← LLM_EXTRACTION_MAX_TOKENS                      ← 8000
-//   LLM_REASONING    ← LLM_EXTRACTION_REASONING                       ← 'low'
-//   LLM_CONCURRENCY  ← LLM_EXTRACTION_CONCURRENCY                     ← 10
+//   LLM_BASE_URL     ← LLM_EXTRACTION_BASE_URL ← OPENROUTER_BASE_URL
+//   LLM_MODEL        ← LLM_EXTRACTION_MODEL
+//   LLM_REASONING    ← LLM_EXTRACTION_REASONING                       ← 'none'
+//   LLM_CONCURRENCY  ← LLM_EXTRACTION_CONCURRENCY                     ← 50
 // ============================================================================
 
 type LlmReasoningEffort = ReasoningEffort | 'none';
 
 function parseLlmReasoningEffort(value: string | undefined): LlmReasoningEffort {
-  if (value === 'none') return 'none';
-  if (value && VALID_REASONING_EFFORTS.includes(value as ReasoningEffort)) {
+  if (!value || value === 'none') return 'none';
+  if (VALID_REASONING_EFFORTS.includes(value as ReasoningEffort)) {
     return value as ReasoningEffort;
   }
-  return 'low';
+  return 'none';
 }
 
 interface LlmExtractionConfig {
   readonly MODEL: string;
-  readonly FALLBACK_MODEL: string;
   readonly BASE_URL: string;
   readonly API_KEY: string;
-  readonly MAX_TOKENS: number;
   readonly REASONING_EFFORT: LlmReasoningEffort;
 }
 
@@ -214,12 +212,28 @@ let cachedLlmExtraction: LlmExtractionConfig | null = null;
 
 function getLlmExtraction(): LlmExtractionConfig {
   if (cachedLlmExtraction) return cachedLlmExtraction;
+
+  const apiKey = envWithFallback('LLM_API_KEY', 'LLM_EXTRACTION_API_KEY', 'OPENROUTER_API_KEY') || '';
+  const baseUrl = envWithFallback('LLM_BASE_URL', 'LLM_EXTRACTION_BASE_URL', 'OPENROUTER_BASE_URL');
+  const model = envWithFallback('LLM_MODEL', 'LLM_EXTRACTION_MODEL');
+
+  if (apiKey && !baseUrl) {
+    throw new Error(
+      'LLM_BASE_URL is required when LLM_API_KEY is set. ' +
+      'Set LLM_BASE_URL to your OpenAI-compatible endpoint (e.g. https://openrouter.ai/api/v1, https://api.openai.com/v1, https://api.cerebras.ai/v1).',
+    );
+  }
+  if (apiKey && !model) {
+    throw new Error(
+      'LLM_MODEL is required when LLM_API_KEY is set. ' +
+      'Set LLM_MODEL to a model identifier your endpoint accepts (e.g. openai/gpt-4.1-mini, gpt-4o, llama-3.3-70b).',
+    );
+  }
+
   cachedLlmExtraction = {
-    API_KEY: envWithFallback('LLM_API_KEY', 'LLM_EXTRACTION_API_KEY', 'OPENROUTER_API_KEY') || '',
-    BASE_URL: envWithFallback('LLM_BASE_URL', 'LLM_EXTRACTION_BASE_URL', 'OPENROUTER_BASE_URL') || 'https://openrouter.ai/api/v1',
-    MODEL: envWithFallback('LLM_MODEL', 'LLM_EXTRACTION_MODEL') || 'openai/gpt-5.4-mini',
-    FALLBACK_MODEL: envWithFallback('LLM_FALLBACK_MODEL', 'RESEARCH_FALLBACK_MODEL') || 'google/gemini-2.5-flash',
-    MAX_TOKENS: safeParseInt(envWithFallback('LLM_MAX_TOKENS', 'LLM_EXTRACTION_MAX_TOKENS'), 8000, 1000, 32000),
+    API_KEY: apiKey,
+    BASE_URL: baseUrl || '',
+    MODEL: model || '',
     REASONING_EFFORT: parseLlmReasoningEffort(envWithFallback('LLM_REASONING', 'LLM_EXTRACTION_REASONING')),
   };
   return cachedLlmExtraction;

@@ -13,7 +13,7 @@ export const scrapeLinksParamsSchema = z.object({
   urls: z
     .array(urlSchema)
     .min(1, { message: 'scrape-links: At least 1 URL required' })
-    .describe('Web page URLs to scrape and extract content from. Reddit URLs (`reddit.com/...`) are rejected with `UNSUPPORTED_URL_TYPE` — use get-reddit-post for `reddit.com/r/.../comments/...` permalinks.'),
+    .describe('URLs to fetch and extract in parallel. Reddit post permalinks (`reddit.com/r/<sub>/comments/<id>/...`) are auto-detected and routed through the Reddit API (threaded post + comments); every other URL flows through the HTTP scraper. Mix reddit + non-reddit URLs freely; both branches run concurrently. Prefer contextually grouped batches — call this tool multiple times in parallel when URL sets are unrelated, instead of one giant mixed batch.'),
   extract: z
     .string()
     .min(1, { message: 'scrape-links: extract cannot be empty' })
