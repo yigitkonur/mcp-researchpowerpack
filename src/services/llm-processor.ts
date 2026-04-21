@@ -37,7 +37,7 @@ const LLM_REQUEST_DEADLINE_MS = 30_000 as const;
 
 type LLMHealthKind = 'planner' | 'extractor';
 
-interface LLMHealthSnapshot {
+export interface LLMHealthSnapshot {
   readonly lastPlannerOk: boolean;
   readonly lastExtractorOk: boolean;
   readonly lastPlannerCheckedAt: string | null;
@@ -46,6 +46,9 @@ interface LLMHealthSnapshot {
   readonly lastExtractorError: string | null;
   readonly plannerConfigured: boolean;
   readonly extractorConfigured: boolean;
+  /** Failures since the last success. Reset to 0 on `markLLMSuccess`. */
+  readonly consecutivePlannerFailures: number;
+  readonly consecutiveExtractorFailures: number;
 }
 
 const llmHealth = {
@@ -55,6 +58,8 @@ const llmHealth = {
   lastExtractorCheckedAt: null as string | null,
   lastPlannerError: null as string | null,
   lastExtractorError: null as string | null,
+  consecutivePlannerFailures: 0,
+  consecutiveExtractorFailures: 0,
 };
 
 export function markLLMSuccess(kind: LLMHealthKind): void {
@@ -63,10 +68,12 @@ export function markLLMSuccess(kind: LLMHealthKind): void {
     llmHealth.lastPlannerOk = true;
     llmHealth.lastPlannerCheckedAt = ts;
     llmHealth.lastPlannerError = null;
+    llmHealth.consecutivePlannerFailures = 0;
   } else {
     llmHealth.lastExtractorOk = true;
     llmHealth.lastExtractorCheckedAt = ts;
     llmHealth.lastExtractorError = null;
+    llmHealth.consecutiveExtractorFailures = 0;
   }
 }
 
@@ -77,10 +84,12 @@ export function markLLMFailure(kind: LLMHealthKind, err: unknown): void {
     llmHealth.lastPlannerOk = false;
     llmHealth.lastPlannerCheckedAt = ts;
     llmHealth.lastPlannerError = message;
+    llmHealth.consecutivePlannerFailures += 1;
   } else {
     llmHealth.lastExtractorOk = false;
     llmHealth.lastExtractorCheckedAt = ts;
     llmHealth.lastExtractorError = message;
+    llmHealth.consecutiveExtractorFailures += 1;
   }
 }
 
@@ -97,6 +106,8 @@ export function getLLMHealth(): LLMHealthSnapshot {
     // tells whether the last attempt actually succeeded.
     plannerConfigured: cap.llmExtraction,
     extractorConfigured: cap.llmExtraction,
+    consecutivePlannerFailures: llmHealth.consecutivePlannerFailures,
+    consecutiveExtractorFailures: llmHealth.consecutiveExtractorFailures,
   };
 }
 
@@ -108,6 +119,8 @@ export function _resetLLMHealthForTests(): void {
   llmHealth.lastExtractorCheckedAt = null;
   llmHealth.lastPlannerError = null;
   llmHealth.lastExtractorError = null;
+  llmHealth.consecutivePlannerFailures = 0;
+  llmHealth.consecutiveExtractorFailures = 0;
 }
 
 interface ProcessingConfig {

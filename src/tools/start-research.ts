@@ -11,6 +11,7 @@ import {
   generateResearchBrief,
   getLLMHealth,
   renderResearchBrief,
+  type LLMHealthSnapshot,
 } from '../services/llm-processor.js';
 import { classifyError } from '../utils/errors.js';
 import { mcpLog } from '../utils/logger.js';
@@ -125,6 +126,64 @@ export function buildDegradedStub(goal?: string): string {
  */
 export const buildOrientation = buildStaticScaffolding;
 
+// ============================================================================
+// Planner-offline gate.
+//
+// The problem we are guarding against: a single transient LLM failure (one bad
+// 429, one malformed JSON response from the classifier) used to poison the
+// gate forever and force every subsequent `start-research` call into the
+// compact stub — even when env was fine and the next call would have
+// succeeded. That created a deadlock where the very tool that could reset
+// the health flag was the tool being blocked.
+//
+// The safer semantics implemented here:
+//  1. If env is not configured, we are offline. Hard stop.
+//  2. Otherwise, require **two consecutive failures** before gating (one
+//     blip is tolerated).
+//  3. Even then, the gate only holds for PLANNER_FAILURE_TTL_MS after the
+//     most recent failure. After that window we give the planner another
+//     chance regardless of the counter — if it is still broken the next
+//     call's failure will re-arm the gate.
+//  4. Any success resets the counter to 0, so the gate opens immediately
+//     on recovery.
+// ============================================================================
+
+/** Minimum consecutive failures before the gate closes. */
+export const PLANNER_FAILURE_THRESHOLD = 2;
+
+/** How long a recent failure burst keeps the gate closed, in ms. */
+export const PLANNER_FAILURE_TTL_MS = 60_000;
+
+type PlannerGateHealth = Pick<
+  LLMHealthSnapshot,
+  'plannerConfigured' | 'consecutivePlannerFailures' | 'lastPlannerCheckedAt'
+>;
+
+/**
+ * Pure predicate — returns true when the planner should be treated as
+ * offline for the purposes of `start-research`. Kept exported and
+ * dependency-free so tests can drive it without touching the LLM.
+ */
+export function isPlannerKnownOffline(
+  health: PlannerGateHealth,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!health.plannerConfigured) {
+    return true;
+  }
+  if (health.consecutivePlannerFailures < PLANNER_FAILURE_THRESHOLD) {
+    return false;
+  }
+  if (health.lastPlannerCheckedAt === null) {
+    return false;
+  }
+  const lastMs = Date.parse(health.lastPlannerCheckedAt);
+  if (Number.isNaN(lastMs)) {
+    return false;
+  }
+  return nowMs - lastMs < PLANNER_FAILURE_TTL_MS;
+}
+
 async function buildGoalAwareBrief(
   goal: string,
   signal?: AbortSignal,
@@ -150,8 +209,7 @@ async function handleStartResearch(
 ): Promise<ToolExecutionResult<StartResearchOutput>> {
   try {
     const llmHealth = getLLMHealth();
-    const plannerKnownOffline = !llmHealth.plannerConfigured
-      || (llmHealth.lastPlannerCheckedAt !== null && !llmHealth.lastPlannerOk);
+    const plannerKnownOffline = isPlannerKnownOffline(llmHealth);
 
     if (plannerKnownOffline && !params.include_playbook) {
       const stub = buildDegradedStub(params.goal);
