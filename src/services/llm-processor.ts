@@ -1,7 +1,9 @@
 /**
  * LLM Processor for content extraction
- * Uses OpenRouter via OPENROUTER_API_KEY for AI-powered content filtering
- * Implements robust retry logic and NEVER throws
+ * Uses any OpenAI-compatible endpoint. Reasoning effort is always 'low'.
+ * Primary model exhausts its retries first; fallback model (LLM_FALLBACK_MODEL) then
+ * gets up to FALLBACK_RETRY_COUNT additional attempts before the call fails.
+ * NEVER throws — always returns a valid result.
  */
 
 import OpenAI from 'openai';
@@ -143,7 +145,10 @@ const LLM_RETRY_CONFIG = {
   maxDelayMs: 5000,
 } as const;
 
-// OpenRouter/OpenAI specific retryable error codes (using Set for type-safe lookup)
+/** Number of additional attempts using the fallback model after primary exhausts. */
+const FALLBACK_RETRY_COUNT = 3 as const;
+
+// OpenAI-compatible retryable error codes (using Set for type-safe lookup)
 const RETRYABLE_LLM_ERROR_CODES = new Set([
   'rate_limit_exceeded',
   'server_error',
@@ -182,16 +187,11 @@ export function createLLMProcessor(): OpenAI | null {
 }
 
 function buildChatRequestBody(model: string, prompt: string): Record<string, unknown> {
-  const requestBody: Record<string, unknown> = {
+  return {
     model,
     messages: [{ role: 'user', content: prompt }],
+    reasoning_effort: 'low',
   };
-
-  if (LLM_EXTRACTION.REASONING_EFFORT !== 'none') {
-    requestBody.reasoning_effort = LLM_EXTRACTION.REASONING_EFFORT;
-  }
-
-  return requestBody;
 }
 
 export async function requestText(
@@ -199,8 +199,9 @@ export async function requestText(
   prompt: string,
   operationLabel: string,
   signal?: AbortSignal,
+  modelOverride?: string,
 ): Promise<{ content: string | null; model: string; error?: string }> {
-  const model = LLM_EXTRACTION.MODEL;
+  const model = modelOverride || LLM_EXTRACTION.MODEL;
 
   try {
     const response = await withStallProtection(
@@ -229,6 +230,41 @@ export async function requestText(
     mcpLog('warning', `${operationLabel} failed for model ${model}: ${message}`, 'llm');
     return { content: null, model, error: message };
   }
+}
+
+/**
+ * Single LLM call with automatic fallback model.
+ * Tries the primary model once; if it fails and LLM_FALLBACK_MODEL is set,
+ * retries up to FALLBACK_RETRY_COUNT times on the fallback model.
+ * Used for single-shot calls (classify, brief, refine queries).
+ */
+export async function requestTextWithFallback(
+  processor: OpenAITextGenerator,
+  prompt: string,
+  operationLabel: string,
+  signal?: AbortSignal,
+): Promise<{ content: string | null; model: string; error?: string }> {
+  const primary = await requestText(processor, prompt, operationLabel, signal);
+  if (primary.content) return primary;
+
+  const fallbackModel = LLM_EXTRACTION.FALLBACK_MODEL;
+  if (!fallbackModel) return primary;
+
+  mcpLog('warning', `Primary model failed, switching to fallback ${fallbackModel}`, 'llm');
+
+  let lastError = primary.error;
+  for (let attempt = 0; attempt < FALLBACK_RETRY_COUNT; attempt++) {
+    if (attempt > 0) {
+      const delayMs = calculateLLMBackoff(attempt - 1);
+      mcpLog('warning', `Fallback retry ${attempt}/${FALLBACK_RETRY_COUNT - 1} in ${delayMs}ms`, 'llm');
+      try { await sleep(delayMs, signal); } catch { break; }
+    }
+    const result = await requestText(processor, prompt, `${operationLabel} [fallback]`, signal, fallbackModel);
+    if (result.content) return result;
+    lastError = result.error;
+  }
+
+  return { content: null, model: fallbackModel, error: lastError };
 }
 
 /**
@@ -408,7 +444,7 @@ ${truncatedContent}`;
 
   let lastError: StructuredError | undefined;
 
-  // Retry loop
+  // Phase 1: primary model with up to LLM_RETRY_CONFIG.maxRetries retries
   for (let attempt = 0; attempt <= LLM_RETRY_CONFIG.maxRetries; attempt++) {
     try {
       if (attempt === 0) {
@@ -417,12 +453,7 @@ ${truncatedContent}`;
         mcpLog('warning', `Retry attempt ${attempt}/${LLM_RETRY_CONFIG.maxRetries}`, 'llm');
       }
 
-      const response = await requestText(
-        processor,
-        prompt,
-        'LLM extraction',
-        signal,
-      );
+      const response = await requestText(processor, prompt, 'LLM extraction', signal);
 
       if (response.content) {
         mcpLog('info', `Successfully extracted ${response.content.length} characters`, 'llm');
@@ -430,7 +461,7 @@ ${truncatedContent}`;
         return { content: response.content, processed: true };
       }
 
-      // Empty response - not retryable
+      // Empty response — not retryable
       mcpLog('warning', 'Received empty response from LLM', 'llm');
       markLLMFailure('extractor', 'LLM returned empty response');
       return {
@@ -446,34 +477,54 @@ ${truncatedContent}`;
 
     } catch (err: unknown) {
       lastError = classifyError(err);
-
-      // Log the error
       const status = hasStatus(err) ? err.status : undefined;
       const code = typeof err === 'object' && err !== null && 'code' in err
         ? String((err as Record<string, unknown>).code)
         : undefined;
       mcpLog('error', `Error (attempt ${attempt + 1}): ${lastError.message} [status=${status}, code=${code}, retryable=${isRetryableLLMError(err)}]`, 'llm');
 
-      // Check if we should retry
       if (isRetryableLLMError(err) && attempt < LLM_RETRY_CONFIG.maxRetries) {
         const delayMs = calculateLLMBackoff(attempt);
         mcpLog('warning', `Retrying in ${delayMs}ms...`, 'llm');
         try { await sleep(delayMs, signal); } catch { break; }
         continue;
       }
-
-      // Non-retryable or max retries reached
       break;
     }
   }
 
-  // All attempts failed - return original content with error info
+  // Phase 2: fallback model — FALLBACK_RETRY_COUNT attempts before giving up
+  const fallbackModel = LLM_EXTRACTION.FALLBACK_MODEL;
+  if (fallbackModel) {
+    mcpLog('warning', `Primary exhausted, switching to fallback ${fallbackModel}`, 'llm');
+    for (let attempt = 0; attempt < FALLBACK_RETRY_COUNT; attempt++) {
+      if (attempt > 0) {
+        const delayMs = calculateLLMBackoff(attempt - 1);
+        mcpLog('warning', `Fallback retry ${attempt}/${FALLBACK_RETRY_COUNT - 1} in ${delayMs}ms`, 'llm');
+        try { await sleep(delayMs, signal); } catch { break; }
+      }
+      try {
+        const response = await requestText(processor, prompt, 'LLM extraction [fallback]', signal, fallbackModel);
+        if (response.content) {
+          mcpLog('info', `Fallback extracted ${response.content.length} characters`, 'llm');
+          markLLMSuccess('extractor');
+          return { content: response.content, processed: true };
+        }
+        mcpLog('warning', 'Fallback returned empty response', 'llm');
+        break;
+      } catch (err: unknown) {
+        lastError = classifyError(err);
+        mcpLog('error', `Fallback error (attempt ${attempt + 1}): ${lastError.message}`, 'llm');
+      }
+    }
+  }
+
   const errorMessage = lastError?.message || 'Unknown LLM error';
   mcpLog('error', `All attempts failed: ${errorMessage}. Returning original content.`, 'llm');
   markLLMFailure('extractor', errorMessage);
 
   return {
-    content, // Return original content as fallback
+    content,
     processed: false,
     error: `LLM extraction failed: ${errorMessage}`,
     errorDetails: lastError || {
@@ -644,7 +695,7 @@ ${lines.join('\n')}`;
   try {
     mcpLog('info', `Classifying ${urlsToClassify.length} URLs against objective`, 'llm');
 
-    const response = await requestText(
+    const response = await requestTextWithFallback(
       processor,
       prompt,
       'Search classification',
@@ -726,7 +777,7 @@ RULES:
 - Keep rationales ≤12 words.`;
 
   try {
-    const response = await requestText(
+    const response = await requestTextWithFallback(
       processor,
       prompt,
       'Raw-mode refine query generation',
@@ -893,7 +944,7 @@ freshness_window:
 - Stable protocols / APIs → "months" or "years".`;
 
   try {
-    const response = await requestText(
+    const response = await requestTextWithFallback(
       processor,
       prompt,
       'Research brief generation',

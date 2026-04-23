@@ -72,14 +72,14 @@ Copy `.env.example`, set only what you need. Missing keys don't crash the server
 
 ### llm (AI extraction + classification)
 
-Any OpenAI-compatible endpoint — OpenRouter, OpenAI, Cerebras, Together, etc. All three vars are required together.
+Any OpenAI-compatible endpoint. `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL` are all required together. Reasoning effort is always `low`.
 
 | var | required? | |
 |-----|-----------|---|
-| `LLM_API_KEY` | yes (for LLM features) | API key for the provider |
-| `LLM_BASE_URL` | yes (for LLM features) | e.g. `https://openrouter.ai/api/v1`, `https://api.openai.com/v1`, `https://api.cerebras.ai/v1` |
-| `LLM_MODEL` | yes (for LLM features) | model identifier your endpoint accepts |
-| `LLM_REASONING` | no (default `none`) | `none` \| `low` \| `medium` \| `high` — opt-in per endpoint support |
+| `LLM_API_KEY` | yes | API key for the endpoint |
+| `LLM_BASE_URL` | yes | base URL for the OpenAI-compatible endpoint (e.g. `https://server.up.railway.app/v1`) |
+| `LLM_MODEL` | yes | primary model (e.g. `gpt-5.4-mini`) |
+| `LLM_FALLBACK_MODEL` | no | model to use after primary exhausts all retries — gets 3 additional attempts (e.g. `gpt-5.4`) |
 | `LLM_CONCURRENCY` | no (default `50`) | parallel LLM calls |
 
 ### evals
@@ -135,7 +135,7 @@ src/
     mcp-helpers.ts       response builders (markdown + structured MCP output)
     utils.ts             shared formatters
   services/
-    llm-processor.ts     AI extraction, classification, brief generation via OpenAI-compatible API
+    llm-processor.ts     AI extraction, classification, brief generation — primary + fallback model, always low reasoning
     markdown-cleaner.ts  HTML/markdown cleanup
   schemas/               zod v4 input validation per tool
   utils/
