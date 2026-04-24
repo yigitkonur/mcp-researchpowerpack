@@ -476,13 +476,9 @@ RULES:
 - Preserve code blocks, command examples, tables exactly.
 - Do NOT add commentary or recommendations outside "Follow-up signals".
 - Page language ≠ English: quote verbatim in the original language AND provide a parenthetical gloss in English.
-- Content clearly failed to load: return ONLY a single line, choosing from:
-  \`## Matches\\n_Page did not load: 404_\`
-  \`## Matches\\n_Page did not load: login-wall_\`
-  \`## Matches\\n_Page did not load: paywall_\`
-  \`## Matches\\n_Page did not load: JS-render-empty_\`
-  \`## Matches\\n_Page did not load: non-text-asset_\`
-  \`## Matches\\n_Page did not load: truncated-before-relevant-section_\`
+- Page appears gated (login wall, paywall, JS-render-empty shell) or near-empty: BEFORE dismissing the page, look for ANY visible text — og:title, og:description, meta description, headline, author name, nav labels, teaser/preview sentences, visible comment snippets. If ANY such text exists, extract it as usual under \`## Source\` + \`## Matches\`, and list the blocked facets under \`## Not found\`. Prefix the first \`## Matches\` bullet with \`**[partial — <reason>]**\` so the caller knows the body is gated (reasons: \`login-wall | paywall | JS-render-empty | truncated-before-relevant-section\`). ONLY when there is NO visible extractable text at all (< 50 words AND no og:* AND no headline AND no preview), return exactly one line:
+  \`## Matches\\n_Page did not load: <reason>_\`
+  Valid reasons: \`404 | login-wall | paywall | JS-render-empty | non-text-asset | truncated-before-relevant-section\`.
 
 Content:
 ${truncatedContent}`

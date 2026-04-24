@@ -63,6 +63,12 @@ interface ProcessedResult {
   url: string;
   content: string;
   index: number; // original position in params.urls[]
+  /**
+   * Cleaned markdown captured before LLM extraction. Preserved so the handler
+   * can fall back to it when the LLM emits the terse "Page did not load: X"
+   * escape line and would otherwise nuke the scraped body.
+   */
+  rawContent?: string;
 }
 
 interface ScrapeMetrics {
@@ -269,7 +275,7 @@ async function fetchWebBranch(
       content = result.content;
     }
 
-    successItems.push({ url: result.url, content, index: origIndex });
+    successItems.push({ url: result.url, content, index: origIndex, rawContent: content });
   }
 
   return {
@@ -348,7 +354,7 @@ async function fetchDocumentBranch(
     }
 
     successful++;
-    successItems.push({ url: input.url, content: result.content, index: input.origIndex });
+    successItems.push({ url: input.url, content: result.content, index: input.origIndex, rawContent: result.content });
   }
 
   return { successItems, failedContents, metrics: { successful, failed, totalCredits: 0 } };
@@ -447,21 +453,75 @@ async function fetchRedditBranch(inputs: BranchInput[]): Promise<ScrapePhaseResu
       continue;
     }
     successful++;
-    successItems.push({ url, content: formatRedditPostAsMarkdown(result), index: origIndex });
+    const md = formatRedditPostAsMarkdown(result);
+    successItems.push({ url, content: md, index: origIndex, rawContent: md });
   }
 
   return { successItems, failedContents, metrics: { successful, failed, totalCredits: 0 } };
+}
+
+// --- Terse-LLM-escape detection + raw fallback merger ---
+
+/**
+ * The LLM extraction prompt tells the model to emit a single terse line when
+ * a page "clearly failed to load" (login walls, JS-render-empty, paywalls,
+ * etc.). In practice the LLM over-triggers this on partially-rendered pages,
+ * causing scrape-links to return a one-line verdict and discard the cleaned
+ * markdown. This detector + merger keep the verdict but re-attach a capped
+ * slice of the raw markdown so the caller always has something to work with.
+ */
+const TERSE_LLM_FAILURE_RE =
+  /^\s*##\s*Matches\s*\n+\s*_Page did not load:\s*([a-z0-9_-]+)_\s*\.?\s*$/i;
+
+/** Cap on the raw-markdown slice appended under "## Raw content ..." */
+export const RAW_FALLBACK_CHAR_CAP = 4000;
+
+/**
+ * If `llmOutput` is exactly the terse "## Matches\n_Page did not load: X_"
+ * line, return the reason token (e.g. "login-wall"). Otherwise null.
+ */
+export function detectTerseFailure(llmOutput: string): string | null {
+  const m = llmOutput.trim().match(TERSE_LLM_FAILURE_RE);
+  return m ? m[1]! : null;
+}
+
+/**
+ * When the LLM emitted the terse escape line, append a capped slice of the
+ * raw cleaned markdown under a `## Raw content (...)` section so the caller
+ * still has the actual scraped body to inspect. No-op otherwise.
+ */
+export function mergeLlmWithRawFallback(
+  llmOutput: string,
+  rawContent: string | undefined,
+): string {
+  const reason = detectTerseFailure(llmOutput);
+  if (!reason) return llmOutput;
+  const trimmed = rawContent?.trim();
+  if (!trimmed) return llmOutput;
+  const snippet =
+    trimmed.length > RAW_FALLBACK_CHAR_CAP
+      ? trimmed.slice(0, RAW_FALLBACK_CHAR_CAP) + '\n\n…[raw truncated]'
+      : trimmed;
+  return `${llmOutput.trim()}\n\n## Raw content (LLM flagged page as ${reason})\n\n${snippet}`;
 }
 
 // --- LLM extraction (shared by both branches) ---
 
 async function processItemsWithLlm(
   successItems: ProcessedResult[],
-  enhancedInstruction: string,
+  enhancedInstruction: string | undefined,
   llmProcessor: ReturnType<typeof createLLMProcessor>,
   reporter: ToolReporter,
 ): Promise<{ items: ProcessedResult[]; llmErrors: number; llmAttempted: number }> {
   let llmErrors = 0;
+
+  // Raw-mode bypass: caller omitted `extract` → return cleaned markdown as-is.
+  if (!enhancedInstruction) {
+    if (successItems.length > 0) {
+      mcpLog('info', 'Raw mode: extract omitted — returning cleaned scraped content without LLM pass', 'scrape');
+    }
+    return { items: successItems, llmErrors, llmAttempted: 0 };
+  }
 
   if (!llmProcessor || successItems.length === 0) {
     if (!llmProcessor && successItems.length > 0) {
@@ -485,7 +545,12 @@ async function processItemsWithLlm(
       );
 
       if (llmResult.processed) {
-        return { ...item, content: llmResult.content };
+        const merged = mergeLlmWithRawFallback(llmResult.content, item.rawContent);
+        if (merged !== llmResult.content) {
+          mcpLog('warning', `LLM emitted terse escape line for ${item.url} — preserved raw fallback`, 'scrape');
+          void reporter.log('warning', `llm_terse_escape: ${item.url} — preserving raw fallback`);
+        }
+        return { ...item, content: merged };
       }
 
       llmErrors++;
@@ -636,7 +701,11 @@ export async function handleScrapeLinks(
     );
   }
 
-  const enhancedInstruction = enhanceExtractionInstruction(params.extract);
+  // Only enhance + run LLM when caller supplied an extract instruction.
+  // Undefined → raw mode (cleaned markdown returned without LLM pass).
+  const enhancedInstruction = params.extract
+    ? enhanceExtractionInstruction(params.extract)
+    : undefined;
 
   await reporter.progress(35, 100, 'Fetching page content');
 
@@ -758,7 +827,7 @@ export function registerScrapeLinksTool(server: MCPServer): void {
       name: 'scrape-links',
       title: 'Scrape Links',
       description:
-        'Fetch many URLs in parallel and run per-URL structured LLM extraction. Auto-detects reddit.com post permalinks and routes them through the Reddit API (threaded post + comments); everything else flows through the HTTP scraper. Safe to call in parallel — group URLs by context rather than jamming unrelated batches together. Each page returns `## Source`, `## Matches` (verbatim-preserved facts), `## Not found` (explicit gaps), and `## Follow-up signals` (new terms + referenced URLs) that feed the next research loop. Describe the SHAPE of what you want in `extract`, facets separated by `|` (e.g. `root cause | affected versions | fix | workarounds | timeline`).',
+        'Fetch many URLs in parallel. With `extract` set, run per-URL structured LLM extraction (each page returns `## Source`, `## Matches` verbatim facts, `## Not found` gaps, `## Follow-up signals` new terms + referenced URLs); omit `extract` for raw mode (cleaned markdown per URL, no LLM pass). Auto-detects reddit.com post permalinks → Reddit API (threaded post + comments); PDF/DOCX/PPTX/XLSX → Jina Reader; everything else → HTTP scraper. Safe to call in parallel — group URLs by context rather than jamming unrelated batches together. Describe the SHAPE of what you want in `extract`, facets separated by `|` (e.g. `root cause | affected versions | fix | workarounds | timeline`).',
       schema: scrapeLinksParamsSchema,
       outputSchema: scrapeLinksOutputSchema,
       annotations: {
