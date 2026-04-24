@@ -25,12 +25,14 @@ import {
 } from '../schemas/scrape-links.js';
 import { ScraperClient } from '../clients/scraper.js';
 import { RedditClient, type PostResult } from '../clients/reddit.js';
+import { JinaClient } from '../clients/jina.js';
 import { MarkdownCleaner } from '../services/markdown-cleaner.js';
 import { createLLMProcessor, processContentWithLLM } from '../services/llm-processor.js';
 import { removeMetaTags } from '../utils/markdown-formatter.js';
 import { extractReadableContent } from '../utils/content-extractor.js';
-import { classifyError } from '../utils/errors.js';
-import { pMap } from '../utils/concurrency.js';
+import { classifyError, ErrorCode } from '../utils/errors.js';
+import { isDocumentUrl } from '../utils/source-type.js';
+import { pMap, pMapSettled } from '../utils/concurrency.js';
 import {
   mcpLog,
   formatSuccess,
@@ -82,7 +84,13 @@ interface BranchInput {
 
 interface ScrapeClients {
   client: ScraperClient;
+  jinaClient: JinaClient;
   llmProcessor: ReturnType<typeof createLLMProcessor>;
+}
+
+interface WebPhaseResult extends ScrapePhaseResult {
+  /** URLs that Scrape.do returned as binary content; re-run through Jina. */
+  binaryDeferred: BranchInput[];
 }
 
 // --- Reddit URL detection ---
@@ -134,12 +142,14 @@ function createScrapeErrorResponse(
 interface PartitionedUrls {
   webInputs: BranchInput[];
   redditInputs: BranchInput[];
+  documentInputs: BranchInput[];
   invalidEntries: { url: string; origIndex: number }[];
 }
 
 function partitionUrls(urls: string[]): PartitionedUrls {
   const webInputs: BranchInput[] = [];
   const redditInputs: BranchInput[] = [];
+  const documentInputs: BranchInput[] = [];
   const invalidEntries: { url: string; origIndex: number }[] = [];
 
   for (let i = 0; i < urls.length; i++) {
@@ -150,14 +160,20 @@ function partitionUrls(urls: string[]): PartitionedUrls {
       invalidEntries.push({ url, origIndex: i });
       continue;
     }
-    if (isRedditUrl(url)) {
+    // Document URLs (.pdf/.docx/.pptx/.xlsx) go straight to Jina Reader —
+    // bypassing Scrape.do because it cannot decode binary bodies. Ordered
+    // before the Reddit check so a hypothetical PDF on a reddit-adjacent host
+    // still takes the document path.
+    if (isDocumentUrl(url)) {
+      documentInputs.push({ url, origIndex: i });
+    } else if (isRedditUrl(url)) {
       redditInputs.push({ url, origIndex: i });
     } else {
       webInputs.push({ url, origIndex: i });
     }
   }
 
-  return { webInputs, redditInputs, invalidEntries };
+  return { webInputs, redditInputs, documentInputs, invalidEntries };
 }
 
 // --- Web branch ---
@@ -165,17 +181,24 @@ function partitionUrls(urls: string[]): PartitionedUrls {
 async function fetchWebBranch(
   inputs: BranchInput[],
   client: ScraperClient,
-): Promise<ScrapePhaseResult> {
+): Promise<WebPhaseResult> {
   if (inputs.length === 0) {
-    return { successItems: [], failedContents: [], metrics: { successful: 0, failed: 0, totalCredits: 0 } };
+    return {
+      successItems: [],
+      failedContents: [],
+      metrics: { successful: 0, failed: 0, totalCredits: 0 },
+      binaryDeferred: [],
+    };
   }
 
   mcpLog('info', `[concurrency] web branch: fanning out ${inputs.length} URL(s) with limit=${CONCURRENCY.SCRAPER}`, 'scrape');
   const urls = inputs.map((i) => i.url);
   const results = await client.scrapeMultiple(urls, { timeout: 60 });
+  const urlToIndex = new Map(inputs.map((i) => [i.url, i.origIndex]));
 
   const successItems: ProcessedResult[] = [];
   const failedContents: string[] = [];
+  const binaryDeferred: BranchInput[] = [];
   let successful = 0;
   let failed = 0;
   let totalCredits = 0;
@@ -186,6 +209,17 @@ async function fetchWebBranch(
     if (!result) {
       failed++;
       failedContents.push(`## ${inputs[i]!.url}\n\n❌ No result returned`);
+      continue;
+    }
+
+    // Binary document detected by content-type — defer to Jina Reader.
+    // These URLs are not counted as failures yet; the handler will re-run
+    // them through the document branch and merge results.
+    if (result.error?.code === ErrorCode.UNSUPPORTED_BINARY_CONTENT) {
+      binaryDeferred.push({
+        url: result.url,
+        origIndex: urlToIndex.get(result.url) ?? origIndex,
+      });
       continue;
     }
 
@@ -211,7 +245,69 @@ async function fetchWebBranch(
     successItems.push({ url: result.url, content, index: origIndex });
   }
 
-  return { successItems, failedContents, metrics: { successful, failed, totalCredits } };
+  return {
+    successItems,
+    failedContents,
+    metrics: { successful, failed, totalCredits },
+    binaryDeferred,
+  };
+}
+
+// --- Document branch (Jina Reader) ---
+
+async function fetchDocumentBranch(
+  inputs: BranchInput[],
+  jinaClient: JinaClient,
+): Promise<ScrapePhaseResult> {
+  if (inputs.length === 0) {
+    return { successItems: [], failedContents: [], metrics: { successful: 0, failed: 0, totalCredits: 0 } };
+  }
+
+  mcpLog(
+    'info',
+    `[concurrency] document branch (jina): converting ${inputs.length} URL(s) with limit=${CONCURRENCY.SCRAPER}`,
+    'scrape',
+  );
+
+  const results = await pMapSettled(
+    inputs,
+    (input) => jinaClient.convert({ url: input.url }),
+    CONCURRENCY.SCRAPER,
+  );
+
+  const successItems: ProcessedResult[] = [];
+  const failedContents: string[] = [];
+  let successful = 0;
+  let failed = 0;
+
+  for (let i = 0; i < results.length; i++) {
+    const settled = results[i];
+    const input = inputs[i]!;
+    if (!settled) {
+      failed++;
+      failedContents.push(`## ${input.url}\n\n❌ No result returned (document conversion)`);
+      continue;
+    }
+    if (settled.status === 'rejected') {
+      failed++;
+      const reason = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
+      failedContents.push(`## ${input.url}\n\n❌ Document conversion failed: ${reason}`);
+      continue;
+    }
+
+    const result = settled.value;
+    if (result.error || result.statusCode < 200 || result.statusCode >= 300) {
+      failed++;
+      const errorMsg = result.error?.message || `HTTP ${result.statusCode}`;
+      failedContents.push(`## ${input.url}\n\n❌ Document conversion failed: ${errorMsg}`);
+      continue;
+    }
+
+    successful++;
+    successItems.push({ url: input.url, content: result.content, index: input.origIndex });
+  }
+
+  return { successItems, failedContents, metrics: { successful, failed, totalCredits: 0 } };
 }
 
 // --- Reddit branch ---
@@ -437,12 +533,12 @@ export async function handleScrapeLinks(
     return createScrapeErrorResponse('NO_URLS', 'No URLs provided', startTime);
   }
 
-  const { webInputs, redditInputs, invalidEntries } = partitionUrls(params.urls);
-  const validCount = webInputs.length + redditInputs.length;
+  const { webInputs, redditInputs, documentInputs, invalidEntries } = partitionUrls(params.urls);
+  const validCount = webInputs.length + redditInputs.length + documentInputs.length;
 
   await reporter.log(
     'info',
-    `Partitioned ${params.urls.length} URL(s): ${webInputs.length} web, ${redditInputs.length} reddit, ${invalidEntries.length} invalid`,
+    `Partitioned ${params.urls.length} URL(s): ${webInputs.length} web, ${redditInputs.length} reddit, ${documentInputs.length} document, ${invalidEntries.length} invalid`,
   );
 
   if (validCount === 0) {
@@ -459,22 +555,27 @@ export async function handleScrapeLinks(
 
   mcpLog(
     'info',
-    `Starting scrape: ${webInputs.length} web + ${redditInputs.length} reddit URL(s)`,
+    `Starting scrape: ${webInputs.length} web + ${redditInputs.length} reddit + ${documentInputs.length} document URL(s)`,
     'scrape',
   );
   await reporter.progress(15, 100, 'Preparing scraper clients');
 
-  // Only initialize web clients if we actually have web URLs. Reddit-only
-  // batches run without touching the scraper.
+  // Only initialize the Scrape.do client if we actually have HTML/web URLs.
+  // The Jina client is cheap (no auth needed) and always constructed so the
+  // document branch and the web→Jina fallback path both work uniformly.
   let clients: ScrapeClients | null = null;
   try {
+    const jinaClient = new JinaClient();
     if (webInputs.length > 0) {
-      clients = { client: new ScraperClient(), llmProcessor: createLLMProcessor() };
+      clients = {
+        client: new ScraperClient(),
+        jinaClient,
+        llmProcessor: createLLMProcessor(),
+      };
     } else {
-      // Reddit-only: no scraper needed, but still create the LLM processor
-      // so the extraction pass runs.
       clients = {
         client: null as unknown as ScraperClient,
+        jinaClient,
         llmProcessor: createLLMProcessor(),
       };
     }
@@ -495,22 +596,63 @@ export async function handleScrapeLinks(
 
   await reporter.progress(35, 100, 'Fetching page content');
 
-  // Run both branches in parallel. Failures in one branch do not block the other.
-  const [webPhase, redditPhase] = await Promise.all([
+  // Phase 1 — run all three branches in parallel. Failures in one branch do
+  // not block the others. The web branch may surface binary-content URLs via
+  // `binaryDeferred`, which are re-routed through Jina in Phase 2.
+  const emptyPhase: WebPhaseResult = {
+    successItems: [], failedContents: [],
+    metrics: { successful: 0, failed: 0, totalCredits: 0 },
+    binaryDeferred: [],
+  };
+  const [webPhase, redditPhase, documentPhase] = await Promise.all([
     webInputs.length > 0
       ? fetchWebBranch(webInputs, clients.client)
-      : Promise.resolve<ScrapePhaseResult>({ successItems: [], failedContents: [], metrics: { successful: 0, failed: 0, totalCredits: 0 } }),
+      : Promise.resolve<WebPhaseResult>(emptyPhase),
     fetchRedditBranch(redditInputs),
+    fetchDocumentBranch(documentInputs, clients.jinaClient),
   ]);
 
-  const successItems = [...webPhase.successItems, ...redditPhase.successItems];
+  // Phase 2 — fallback for URLs that Scrape.do reported as binary.
+  let deferredPhase: ScrapePhaseResult = {
+    successItems: [], failedContents: [],
+    metrics: { successful: 0, failed: 0, totalCredits: 0 },
+  };
+  if (webPhase.binaryDeferred.length > 0) {
+    await reporter.log(
+      'info',
+      `Rerouting ${webPhase.binaryDeferred.length} binary URL(s) from Scrape.do → Jina Reader`,
+    );
+    deferredPhase = await fetchDocumentBranch(webPhase.binaryDeferred, clients.jinaClient);
+  }
+
+  const successItems = [
+    ...webPhase.successItems,
+    ...redditPhase.successItems,
+    ...documentPhase.successItems,
+    ...deferredPhase.successItems,
+  ];
   const invalidFailed = invalidEntries.map(
     ({ url }) => `## ${url}\n\n❌ Invalid URL format`,
   );
-  const failedContents = [...invalidFailed, ...webPhase.failedContents, ...redditPhase.failedContents];
+  const failedContents = [
+    ...invalidFailed,
+    ...webPhase.failedContents,
+    ...redditPhase.failedContents,
+    ...documentPhase.failedContents,
+    ...deferredPhase.failedContents,
+  ];
   const metrics: ScrapeMetrics = {
-    successful: webPhase.metrics.successful + redditPhase.metrics.successful,
-    failed: invalidEntries.length + webPhase.metrics.failed + redditPhase.metrics.failed,
+    successful:
+      webPhase.metrics.successful
+      + redditPhase.metrics.successful
+      + documentPhase.metrics.successful
+      + deferredPhase.metrics.successful,
+    failed:
+      invalidEntries.length
+      + webPhase.metrics.failed
+      + redditPhase.metrics.failed
+      + documentPhase.metrics.failed
+      + deferredPhase.metrics.failed,
     totalCredits: webPhase.metrics.totalCredits,
   };
 

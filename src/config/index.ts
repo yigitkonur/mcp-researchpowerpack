@@ -56,6 +56,7 @@ interface EnvConfig {
   SEARCH_API_KEY: string | undefined;
   REDDIT_CLIENT_ID: string | undefined;
   REDDIT_CLIENT_SECRET: string | undefined;
+  JINA_API_KEY: string | undefined;
 }
 
 let cachedEnv: EnvConfig | null = null;
@@ -67,6 +68,7 @@ export function parseEnv(): EnvConfig {
     SEARCH_API_KEY: process.env.SERPER_API_KEY || undefined,
     REDDIT_CLIENT_ID: process.env.REDDIT_CLIENT_ID || undefined,
     REDDIT_CLIENT_SECRET: process.env.REDDIT_CLIENT_SECRET || undefined,
+    JINA_API_KEY: process.env.JINA_API_KEY || undefined,
   };
   return cachedEnv;
 }

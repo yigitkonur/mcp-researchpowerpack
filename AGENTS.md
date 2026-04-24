@@ -93,12 +93,16 @@ src/
   clients/
     search.ts                Serper client
     reddit.ts                Reddit API client (OAuth + threaded fetch)
-    scraper.ts               Scrape.do HTTP scraper client
+    scraper.ts               Scrape.do HTTP scraper client (rejects binary bodies
+                             via content-type sniff so the handler can reroute)
+    jina.ts                  Jina Reader client (r.jina.ai) — turns PDF / DOCX /
+                             PPTX / XLSX URLs into clean markdown
   tools/
     registry.ts              registerAllTools() — wires 3 tools + 2 prompts + resources
     start-research.ts        goal-tailored brief + static playbook + planner circuit-breaker
     search.ts                web-search handler (scope=web|reddit|both, CTR ranking, LLM tiering)
-    scrape.ts                scrape-links handler (reddit + web branches in parallel)
+    scrape.ts                scrape-links handler (reddit + web + document branches in
+                             parallel; web-branch binary responses reroute to Jina)
     mcp-helpers.ts           MCP response builders: markdown(), error(), toolFailure()
     utils.ts                 Shared formatters
   services/
@@ -131,7 +135,7 @@ src/
 - **Capability detection**: `getCapabilities()` in `src/config/index.ts` evaluates which API keys are present at startup. Missing keys disable the affected tool gracefully via `getMissingEnvMessage()`; they never crash the server.
 - **Lazy LLM config via `Proxy`**: `LLM_EXTRACTION` throws at first property access if `LLM_BASE_URL` or `LLM_MODEL` are missing while `LLM_API_KEY` is set. Clean startup when LLM is unconfigured.
 - **Bounded concurrency**: Every parallel fan-out uses `pMap`/`pMapSettled` with explicit limits (defaults: search 50, scraper 50, reddit 50, LLM 50; override via env, clamped 1–200).
-- **Reddit + web parallelism in `scrape-links`**: Both branches run concurrently via `Promise.all`; results merge in original input order.
+- **Reddit + web + document parallelism in `scrape-links`**: Three branches run concurrently via `Promise.all` and results merge in original input order. The document branch uses `JinaClient` (Jina Reader) to convert PDF / DOCX / PPTX / XLSX URLs to markdown; it receives URLs via both a pre-fetch extension gate (`isDocumentUrl`) and a post-fetch fallback path (Scrape.do returns `UNSUPPORTED_BINARY_CONTENT` when `content-type` is binary, triggering a Jina retry for that URL only).
 - **CTR-based URL ranking**: `web-search` scores URLs by CTR position weights (rank 1 → 100, rank 10 → 12.56) and surfaces a static descending weight (`w=N`) to the LLM classifier.
 - **Tools never throw**: Every tool handler wraps in try/catch, returning `toolFailure(errorMessage)` so MCP `isError` flips correctly.
 - **Structured errors**: `StructuredError` with `code`, `retryable`, `statusCode`, `cause`. See §7 for codes.
@@ -163,8 +167,9 @@ Copy `.env.example`, set only what you need.
 | Var | Tool |
 |---|---|
 | `SERPER_API_KEY` | `web-search` (all scopes) |
-| `SCRAPEDO_API_KEY` | `scrape-links` (non-reddit URLs) |
+| `SCRAPEDO_API_KEY` | `scrape-links` (non-reddit, non-document URLs) |
 | `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` | `scrape-links` (reddit.com permalinks — threaded post + comments) |
+| `JINA_API_KEY` *(optional)* | `scrape-links` (PDF / DOCX / PPTX / XLSX → markdown via `r.jina.ai`). Works unauthenticated at 20 RPM; key raises the limit to 200+ RPM. |
 
 ### LLM (required together when LLM is enabled)
 
@@ -352,6 +357,8 @@ mcpc @rp close
 | `start-research` (no LLM) | emits the compact degraded stub with a footer, not the full goal-tailored brief |
 | `scrape-links` with a Reddit URL | routes via Reddit API; does NOT return `UNSUPPORTED_URL_TYPE` (that was v5 behaviour — v6 handles Reddit directly) |
 | `scrape-links` with a non-Reddit URL + LLM on | returns cleaned markdown with non-zero extraction credits |
+| `scrape-links` with a `.pdf` URL | routes via Jina Reader (`r.jina.ai`); returns non-empty markdown. Pre-fetch extension gate skips Scrape.do entirely. Also works for `.docx`, `.pptx`, `.xlsx`. |
+| `scrape-links` with a URL whose server returns `Content-Type: application/pdf` | Scrape.do emits `UNSUPPORTED_BINARY_CONTENT` → handler reroutes through Jina Reader → returns markdown. No mojibake/binary garbage in output. |
 
 The `/health` HTTP endpoint may return a simplified `{status, timestamp}` if the deployment is behind a proxy (e.g. Cloudflare). The MCP `health://status` resource bypasses that and returns the full payload.
 

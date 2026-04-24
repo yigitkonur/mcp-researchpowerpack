@@ -58,3 +58,57 @@ export function classifySourceByUrl(url: string): SourceType {
   }
   return 'web';
 }
+
+// ── Document-format detection (PDF / Office) ───────────────────────────────
+// Scrape.do + Readability + Turndown assume HTML input. Binary document
+// formats need a markdown-extraction service (Jina Reader) instead. These two
+// helpers give the scrape pipeline both a pre-fetch gate (URL suffix) and a
+// post-fetch gate (response Content-Type header).
+
+const DOCUMENT_PATH_SUFFIXES = [
+  '.pdf',
+  '.doc', '.docx',
+  '.ppt', '.pptx',
+  '.xls', '.xlsx',
+] as const;
+
+/**
+ * Pre-fetch gate: does this URL's path end in a known binary-document suffix?
+ * Case-insensitive. Trailing query strings / fragments are ignored — only the
+ * pathname is inspected. Invalid URLs return false (handled upstream).
+ */
+export function isDocumentUrl(url: string): boolean {
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname.toLowerCase();
+  } catch {
+    return false;
+  }
+  for (const suffix of DOCUMENT_PATH_SUFFIXES) {
+    if (pathname.endsWith(suffix)) return true;
+  }
+  return false;
+}
+
+const BINARY_CONTENT_TYPE_PREFIXES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.',
+  'application/vnd.ms-excel',
+  'application/vnd.ms-powerpoint',
+  'application/octet-stream',
+] as const;
+
+/**
+ * Post-fetch gate: does this Content-Type header indicate a binary document
+ * that our HTML pipeline cannot decode? Returns false for HTML/JSON/plain text
+ * and for unknown/missing content-types (the upstream pipeline can still try).
+ */
+export function isBinaryDocumentContentType(contentType: string | null | undefined): boolean {
+  if (!contentType) return false;
+  const lower = contentType.toLowerCase();
+  for (const prefix of BINARY_CONTENT_TYPE_PREFIXES) {
+    if (lower.startsWith(prefix)) return true;
+  }
+  return false;
+}

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { classifySourceByUrl } from '../src/utils/source-type.js';
+import {
+  classifySourceByUrl,
+  isDocumentUrl,
+  isBinaryDocumentContentType,
+} from '../src/utils/source-type.js';
 
 const FIXTURES: Array<[string, ReturnType<typeof classifySourceByUrl>]> = [
   ['https://reddit.com/r/foo/comments/abc/post', 'reddit'],
@@ -37,3 +41,59 @@ for (const [url, expected] of FIXTURES) {
 test('unknown URL falls back to "web"', () => {
   assert.equal(classifySourceByUrl('not-a-url'), 'web');
 });
+
+// ── isDocumentUrl ──────────────────────────────────────────────────────────
+
+const DOCUMENT_URL_FIXTURES: Array<[string, boolean]> = [
+  ['https://myk.gov.tr/images/articles/strateji/beklentiler_raporu/MYK_2024_MaliDurum_Beklentiler_Raporu.pdf', true],
+  ['https://www.meb.gov.tr/meb_iys_dosyalar/2026_01/30122345_Kalfalik_Ustalik_ve_Usta_Ogreticilik_e-Sinav_Kilavuzu_2026.pdf', true],
+  ['https://example.com/file.PDF', true],            // case-insensitive
+  ['https://example.com/report.docx', true],
+  ['https://example.com/slides.pptx', true],
+  ['https://example.com/sheet.xlsx', true],
+  ['https://example.com/legacy.doc', true],
+  ['https://example.com/legacy.ppt', true],
+  ['https://example.com/legacy.xls', true],
+  ['https://example.com/file.pdf?download=1', true], // query string ignored
+  ['https://example.com/file.pdf#page=3', true],     // fragment ignored
+  ['https://example.com/index.html', false],
+  ['https://example.com/', false],
+  ['https://example.com/some-path', false],
+  ['https://www.reddit.com/r/x/comments/y/z', false],
+  ['not-a-url', false],
+  ['', false],
+];
+
+for (const [url, expected] of DOCUMENT_URL_FIXTURES) {
+  test(`isDocumentUrl: ${url.slice(0, 60) || '<empty>'} → ${expected}`, () => {
+    assert.equal(isDocumentUrl(url), expected);
+  });
+}
+
+// ── isBinaryDocumentContentType ────────────────────────────────────────────
+
+const CONTENT_TYPE_FIXTURES: Array<[string | null | undefined, boolean]> = [
+  ['application/pdf', true],
+  ['application/pdf; charset=binary', true],
+  ['APPLICATION/PDF', true],
+  ['application/msword', true],
+  ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', true],
+  ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', true],
+  ['application/vnd.openxmlformats-officedocument.presentationml.presentation', true],
+  ['application/vnd.ms-excel', true],
+  ['application/vnd.ms-powerpoint', true],
+  ['application/octet-stream', true],
+  ['text/html', false],
+  ['text/html; charset=utf-8', false],
+  ['application/json', false],
+  ['text/plain', false],
+  ['', false],
+  [null, false],
+  [undefined, false],
+];
+
+for (const [header, expected] of CONTENT_TYPE_FIXTURES) {
+  test(`isBinaryDocumentContentType: ${header ?? '<null>'} → ${expected}`, () => {
+    assert.equal(isBinaryDocumentContentType(header), expected);
+  });
+}
