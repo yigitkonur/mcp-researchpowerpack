@@ -42,6 +42,10 @@ import {
   type ToolReporter,
 } from './mcp-helpers.js';
 import { sanitizeSuggestion } from '../utils/sanitize.js';
+import {
+  normalizeQueryForDispatch,
+  relaxQueryForRetry,
+} from '../utils/query-relax.js';
 
 // --- Internal types ---
 
@@ -76,6 +80,92 @@ function decorateQueriesForScope(queries: string[], scope: 'web' | 'reddit' | 'b
 async function executeSearches(queries: string[]): Promise<SearchResponse> {
   const client = new SearchClient();
   return client.searchMultiple(queries);
+}
+
+interface QueryRewriteRecord {
+  original: string;
+  rewritten: string;
+  rules: string[];
+}
+
+interface RetriedQueryRecord {
+  original: string;
+  retried_with: string;
+  rules: string[];
+  recovered_results: number;
+}
+
+/** Run Serper, then for each query that returned 0 results build a relaxed
+ *  retry (Phase B) and reissue them in a single second batch. Replace the
+ *  empty slot with the retry's results when the retry recovered ≥1 hit, but
+ *  keep the original query string in the slot so downstream aggregation and
+ *  follow-up rendering stay consistent. */
+async function executeWithRelaxRetry(
+  dispatched: string[],
+  reporter: ToolReporter,
+): Promise<{ response: SearchResponse; retried: RetriedQueryRecord[] }> {
+  const initial = await executeSearches(dispatched);
+
+  const emptyIndices = initial.searches
+    .map((s, i) => (s.results.length === 0 ? i : -1))
+    .filter((i) => i !== -1);
+
+  if (emptyIndices.length === 0) {
+    return { response: initial, retried: [] };
+  }
+
+  interface Plan { index: number; original: string; relaxed: string; rules: string[] }
+  const plans: Plan[] = [];
+  for (const idx of emptyIndices) {
+    const dq = dispatched[idx];
+    if (typeof dq !== 'string') continue;
+    const r = relaxQueryForRetry(dq);
+    if (r.changed && r.rewritten !== dq) {
+      plans.push({ index: idx, original: dq, relaxed: r.rewritten, rules: [...r.rules] });
+    }
+  }
+
+  if (plans.length === 0) {
+    return { response: initial, retried: [] };
+  }
+
+  mcpLog(
+    'info',
+    `${plans.length}/${emptyIndices.length} empty-result queries eligible for relaxation retry`,
+    'search',
+  );
+  await reporter.log(
+    'info',
+    `${plans.length} queries returned 0 results; retrying with relaxation`,
+  );
+
+  const retryResp = await executeSearches(plans.map((p) => p.relaxed));
+  const retried: RetriedQueryRecord[] = [];
+  const retryByIndex = new Map<number, SearchResponse['searches'][number]>();
+
+  plans.forEach((plan, i) => {
+    const r = retryResp.searches[i];
+    if (r) retryByIndex.set(plan.index, r);
+    retried.push({
+      original: plan.original,
+      retried_with: plan.relaxed,
+      rules: plan.rules,
+      recovered_results: r?.results.length ?? 0,
+    });
+  });
+
+  const mergedSearches = initial.searches.map((s, idx) => {
+    const r = retryByIndex.get(idx);
+    if (r && r.results.length > 0) {
+      return { ...r, query: s.query };
+    }
+    return s;
+  });
+
+  return {
+    response: { ...initial, searches: mergedSearches },
+    retried,
+  };
 }
 
 function filterScopedSearches(
@@ -398,6 +488,8 @@ function buildMetadata(
   llmClassified: boolean,
   scope: 'web' | 'reddit' | 'both',
   llmError?: string,
+  queryRewrites?: QueryRewriteRecord[],
+  retriedQueries?: RetriedQueryRecord[],
 ) {
   const coverageSummary = searches.map(s => {
     let topDomain: string | undefined;
@@ -421,6 +513,8 @@ function buildMetadata(
     ...(llmError ? { llm_error: llmError } : {}),
     coverage_summary: coverageSummary,
     ...(lowYieldQueries.length > 0 ? { low_yield_queries: lowYieldQueries } : {}),
+    ...(queryRewrites && queryRewrites.length > 0 ? { query_rewrites: queryRewrites } : {}),
+    ...(retriedQueries && retriedQueries.length > 0 ? { retried_queries: retriedQueries } : {}),
   };
 }
 
@@ -502,7 +596,37 @@ export async function handleWebSearch(
     await reporter.log('info', `Searching for ${effectiveQueries.length} query/queries (scope=${params.scope})`);
     await reporter.progress(15, 100, 'Submitting search queries');
 
-    const rawResponse = await executeSearches(effectiveQueries);
+    // Phase A — pre-dispatch normalizer. Rewrites the small fraction of
+    // queries Google was statistically going to mis-handle (3+ phrase AND,
+    // operator chars in quotes, paths in quotes). See src/utils/query-relax.ts.
+    const dispatchPlan = effectiveQueries.map((q) => {
+      const r = normalizeQueryForDispatch(q);
+      return { original: q, dispatched: r.rewritten, rules: [...r.rules], changed: r.changed };
+    });
+    const dispatchedQueries = dispatchPlan.map((p) => p.dispatched);
+    const queryRewrites: QueryRewriteRecord[] = dispatchPlan
+      .filter((p) => p.changed)
+      .map((p) => ({ original: p.original, rewritten: p.dispatched, rules: p.rules }));
+
+    if (queryRewrites.length > 0) {
+      mcpLog(
+        'info',
+        `Pre-dispatch normalized ${queryRewrites.length}/${effectiveQueries.length} queries`,
+        'search',
+      );
+      await reporter.log(
+        'info',
+        `Normalized ${queryRewrites.length} queries pre-dispatch`,
+      );
+    }
+
+    // Phase B — on-empty retry: any query returning 0 results gets one
+    // relaxed retry (drop quotes, drop site:). Recovered hits replace the
+    // empty slot transparently.
+    const { response: rawResponse, retried: retriedQueries } = await executeWithRelaxRetry(
+      dispatchedQueries,
+      reporter,
+    );
     const response = filterScopedSearches(rawResponse, params.scope);
     await reporter.progress(50, 100, 'Collected search results');
 
@@ -581,6 +705,7 @@ export async function handleWebSearch(
     const executionTime = Date.now() - startTime;
     const metadata = buildMetadata(
       aggregation, executionTime, response.totalQueries, response.searches, llmClassified, params.scope, llmError,
+      queryRewrites, retriedQueries,
     );
 
     // Build per-row structured results so capability-aware clients can
