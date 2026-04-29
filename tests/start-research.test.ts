@@ -3,32 +3,47 @@ import test from 'node:test';
 
 import { buildOrientation, buildStaticScaffolding } from '../src/tools/start-research.js';
 
-test('static scaffolding covers concept groups, research loop, and output discipline', () => {
+test('static scaffolding teaches the 3-tool mental model', () => {
   const markdown = buildStaticScaffolding();
 
-  assert.match(markdown, /## Concept groups — the core mental model/);
-  assert.match(markdown, /## The research loop/);
-  assert.match(markdown, /## Reddit branch/);
-  assert.match(markdown, /## Output discipline/);
-  assert.match(markdown, /Never cite a URL from a search snippet/i);
+  assert.match(markdown, /## The 3 tools/);
+  assert.match(markdown, /`start-research`/);
+  assert.match(markdown, /`web-search`/);
   assert.match(markdown, /`scrape-links`/);
 });
 
-test('static scaffolding teaches concept-group sizing and distinctness rule', () => {
+test('static scaffolding names the core research loop', () => {
   const markdown = buildStaticScaffolding();
 
-  assert.match(markdown, /Narrow technical bug → 2–3 groups/);
-  assert.match(markdown, /Open-ended synthesis → 8\+ groups/);
-  assert.match(markdown, /they must not overlap/i);
+  assert.match(markdown, /## The loop/);
+  assert.match(markdown, /## Output discipline/);
+  assert.match(markdown, /Never cite a URL from a search snippet/i);
 });
 
-test('static scaffolding enumerates the Reddit-branch negative list', () => {
+test('static scaffolding teaches aggressive multi-call and parallel-callability', () => {
   const markdown = buildStaticScaffolding();
 
-  assert.match(markdown, /Do NOT fire Reddit for/);
-  assert.match(markdown, /CVE lookups/);
-  assert.match(markdown, /API spec questions/);
-  assert.match(markdown, /pricing pages/);
+  assert.match(markdown, /aggressively/i);
+  assert.match(markdown, /2[–-]4 rounds/i);
+  assert.match(markdown, /Parallel-safe/i);
+  assert.match(markdown, /up to 50 queries/i);
+});
+
+test('static scaffolding explains scope values for web-search', () => {
+  const markdown = buildStaticScaffolding();
+
+  assert.match(markdown, /"reddit"/);
+  assert.match(markdown, /"web"/);
+  assert.match(markdown, /"both"/);
+  assert.match(markdown, /sentiment \/ migration/i);
+});
+
+test('static scaffolding documents scrape-links reddit auto-detection', () => {
+  const markdown = buildStaticScaffolding();
+
+  assert.match(markdown, /Auto-detects/i);
+  assert.match(markdown, /reddit\.com/i);
+  assert.match(markdown, /Reddit API/i);
 });
 
 test('includes the focus line when a goal is provided', () => {
@@ -39,4 +54,11 @@ test('includes the focus line when a goal is provided', () => {
 
 test('buildOrientation is exported as a backward-compat alias', () => {
   assert.equal(buildOrientation, buildStaticScaffolding);
+});
+
+test('scaffolding surfaces the run-research skill install hint', () => {
+  const markdown = buildStaticScaffolding();
+
+  assert.match(markdown, /run-research/);
+  assert.match(markdown, /npx -y skills add/);
 });
