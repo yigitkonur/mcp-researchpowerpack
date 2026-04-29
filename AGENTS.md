@@ -14,7 +14,7 @@ Key design contracts (v6):
 - `web-search` accepts `scope: "web" | "reddit" | "both"`. The previous `search-reddit` tool was replaced by `scope: "reddit"` — do not re-add it.
 - Tool discovery is description-led. There is no bootstrap gate — `start-research` is a strong recommendation via tool description, not a runtime precondition.
 
-**Live deployment:** `https://research.yigitkonur.com/mcp` (Manufact Cloud, `deploymentId: 68d82e47-4f37-44af-b599-b5b686a9593a`, org `primary-2e5b3ad6`; tracked in `.mcp-use/project.json`).
+**Live deployment:** `https://research.yigitkonur.com/mcp` (Manufact Cloud, `deploymentId: 575bc2f7-70c8-45f6-ba13-fa3c5104558a`, org `primary-2e5b3ad6`; tracked in `.mcp-use/project.json`).
 
 ---
 
