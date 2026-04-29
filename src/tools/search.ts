@@ -21,6 +21,7 @@ import {
   createLLMProcessor,
   classifySearchResults,
   suggestRefineQueriesForRawMode,
+  type ClassificationEntry,
   type ClassificationResult,
   type RefineQuerySuggestion,
 } from '../services/llm-processor.js';
@@ -40,9 +41,11 @@ import {
   type ToolExecutionResult,
   type ToolReporter,
 } from './mcp-helpers.js';
-import { requireBootstrap } from '../utils/bootstrap-guard.js';
-import { redditKeywordGuard } from '../utils/reddit-keyword-guard.js';
 import { sanitizeSuggestion } from '../utils/sanitize.js';
+import {
+  normalizeQueryForDispatch,
+  relaxQueryForRetry,
+} from '../utils/query-relax.js';
 
 // --- Internal types ---
 
@@ -77,6 +80,92 @@ function decorateQueriesForScope(queries: string[], scope: 'web' | 'reddit' | 'b
 async function executeSearches(queries: string[]): Promise<SearchResponse> {
   const client = new SearchClient();
   return client.searchMultiple(queries);
+}
+
+interface QueryRewriteRecord {
+  original: string;
+  rewritten: string;
+  rules: string[];
+}
+
+interface RetriedQueryRecord {
+  original: string;
+  retried_with: string;
+  rules: string[];
+  recovered_results: number;
+}
+
+/** Run Serper, then for each query that returned 0 results build a relaxed
+ *  retry (Phase B) and reissue them in a single second batch. Replace the
+ *  empty slot with the retry's results when the retry recovered ≥1 hit, but
+ *  keep the original query string in the slot so downstream aggregation and
+ *  follow-up rendering stay consistent. */
+async function executeWithRelaxRetry(
+  dispatched: string[],
+  reporter: ToolReporter,
+): Promise<{ response: SearchResponse; retried: RetriedQueryRecord[] }> {
+  const initial = await executeSearches(dispatched);
+
+  const emptyIndices = initial.searches
+    .map((s, i) => (s.results.length === 0 ? i : -1))
+    .filter((i) => i !== -1);
+
+  if (emptyIndices.length === 0) {
+    return { response: initial, retried: [] };
+  }
+
+  interface Plan { index: number; original: string; relaxed: string; rules: string[] }
+  const plans: Plan[] = [];
+  for (const idx of emptyIndices) {
+    const dq = dispatched[idx];
+    if (typeof dq !== 'string') continue;
+    const r = relaxQueryForRetry(dq);
+    if (r.changed && r.rewritten !== dq) {
+      plans.push({ index: idx, original: dq, relaxed: r.rewritten, rules: [...r.rules] });
+    }
+  }
+
+  if (plans.length === 0) {
+    return { response: initial, retried: [] };
+  }
+
+  mcpLog(
+    'info',
+    `${plans.length}/${emptyIndices.length} empty-result queries eligible for relaxation retry`,
+    'search',
+  );
+  await reporter.log(
+    'info',
+    `${plans.length} queries returned 0 results; retrying with relaxation`,
+  );
+
+  const retryResp = await executeSearches(plans.map((p) => p.relaxed));
+  const retried: RetriedQueryRecord[] = [];
+  const retryByIndex = new Map<number, SearchResponse['searches'][number]>();
+
+  plans.forEach((plan, i) => {
+    const r = retryResp.searches[i];
+    if (r) retryByIndex.set(plan.index, r);
+    retried.push({
+      original: plan.original,
+      retried_with: plan.relaxed,
+      rules: plan.rules,
+      recovered_results: r?.results.length ?? 0,
+    });
+  });
+
+  const mergedSearches = initial.searches.map((s, idx) => {
+    const r = retryByIndex.get(idx);
+    if (r && r.results.length > 0) {
+      return { ...r, query: s.query };
+    }
+    return s;
+  });
+
+  return {
+    response: { ...initial, searches: mergedSearches },
+    retried,
+  };
 }
 
 function filterScopedSearches(
@@ -189,6 +278,74 @@ export function appendSignalsAndFollowUps(
   return sections.join('\n');
 }
 
+// --- "Start here" section ---
+//
+// Surfaces the best 3-5 URLs at the top of the classified response so an agent
+// skimming the first screen sees them before tier tables. Deterministic: uses
+// existing `tier` + `rank` + `reason` from the classifier, no extra LLM call.
+//
+// Algorithm: take HIGHLY_RELEVANT by rank up to MAX_START_HERE; if fewer than
+// MIN_START_HERE, pad from top MAYBE_RELEVANT; skip entirely if no entries
+// above OTHER.
+
+const MIN_START_HERE = 3;
+const MAX_START_HERE = 5;
+
+/** Minimal structural shape — avoids coupling to private `RankedUrl` type. */
+interface StartHereCandidate {
+  readonly rank: number;
+  readonly url: string;
+  readonly title: string;
+}
+
+interface StartHereTiers {
+  readonly high: readonly StartHereCandidate[];
+  readonly maybe: readonly StartHereCandidate[];
+}
+
+export function buildStartHereSection(
+  tiers: StartHereTiers,
+  entryByRank: Map<number, ClassificationEntry>,
+  opts: { min?: number; max?: number } = {},
+): string {
+  const min = opts.min ?? MIN_START_HERE;
+  const max = opts.max ?? MAX_START_HERE;
+
+  const picks: Array<{ candidate: StartHereCandidate; tier: 'HIGHLY_RELEVANT' | 'MAYBE_RELEVANT' }> = [];
+
+  for (const candidate of tiers.high) {
+    if (picks.length >= max) break;
+    picks.push({ candidate, tier: 'HIGHLY_RELEVANT' });
+  }
+
+  if (picks.length < min) {
+    const target = Math.min(min, max);
+    for (const candidate of tiers.maybe) {
+      if (picks.length >= target) break;
+      picks.push({ candidate, tier: 'MAYBE_RELEVANT' });
+    }
+  }
+
+  if (picks.length === 0) return '';
+
+  const lines: string[] = [];
+  lines.push('## Start here — best candidates for your extract');
+  picks.forEach((pick, i) => {
+    const entry = entryByRank.get(pick.candidate.rank);
+    const reason = entry?.reason && entry.reason.trim().length > 0 ? entry.reason : '—';
+    let domain: string;
+    try {
+      domain = new URL(pick.candidate.url).hostname.replace(/^www\./, '');
+    } catch {
+      domain = pick.candidate.url;
+    }
+    lines.push(
+      `${i + 1}. **[${pick.candidate.title}](${pick.candidate.url})** — ${domain} — ${reason} *(${pick.tier}, rank ${pick.candidate.rank})*`,
+    );
+  });
+  return lines.join('\n');
+}
+
 // --- Classified output (3-tier LLM-classified table) ---
 
 function buildClassifiedOutput(
@@ -233,6 +390,18 @@ function buildClassifiedOutput(
     lines.push(`> Confidence: \`${classification.confidence}\`${confReason}`);
   }
   lines.push('');
+
+  // "Start here" block: surface the top 3-5 URLs above the synthesis so an
+  // agent skimming the first screen sees scrape candidates before prose.
+  const startHere = buildStartHereSection(
+    { high: tiers.high, maybe: tiers.maybe },
+    entryByRank,
+  );
+  if (startHere) {
+    lines.push(startHere);
+    lines.push('');
+  }
+
   lines.push(`**Summary:** ${classification.synthesis}`);
   lines.push('');
 
@@ -319,6 +488,8 @@ function buildMetadata(
   llmClassified: boolean,
   scope: 'web' | 'reddit' | 'both',
   llmError?: string,
+  queryRewrites?: QueryRewriteRecord[],
+  retriedQueries?: RetriedQueryRecord[],
 ) {
   const coverageSummary = searches.map(s => {
     let topDomain: string | undefined;
@@ -342,6 +513,8 @@ function buildMetadata(
     ...(llmError ? { llm_error: llmError } : {}),
     coverage_summary: coverageSummary,
     ...(lowYieldQueries.length > 0 ? { low_yield_queries: lowYieldQueries } : {}),
+    ...(queryRewrites && queryRewrites.length > 0 ? { query_rewrites: queryRewrites } : {}),
+    ...(retriedQueries && retriedQueries.length > 0 ? { retried_queries: retriedQueries } : {}),
   };
 }
 
@@ -423,7 +596,37 @@ export async function handleWebSearch(
     await reporter.log('info', `Searching for ${effectiveQueries.length} query/queries (scope=${params.scope})`);
     await reporter.progress(15, 100, 'Submitting search queries');
 
-    const rawResponse = await executeSearches(effectiveQueries);
+    // Phase A — pre-dispatch normalizer. Rewrites the small fraction of
+    // queries Google was statistically going to mis-handle (3+ phrase AND,
+    // operator chars in quotes, paths in quotes). See src/utils/query-relax.ts.
+    const dispatchPlan = effectiveQueries.map((q) => {
+      const r = normalizeQueryForDispatch(q);
+      return { original: q, dispatched: r.rewritten, rules: [...r.rules], changed: r.changed };
+    });
+    const dispatchedQueries = dispatchPlan.map((p) => p.dispatched);
+    const queryRewrites: QueryRewriteRecord[] = dispatchPlan
+      .filter((p) => p.changed)
+      .map((p) => ({ original: p.original, rewritten: p.dispatched, rules: p.rules }));
+
+    if (queryRewrites.length > 0) {
+      mcpLog(
+        'info',
+        `Pre-dispatch normalized ${queryRewrites.length}/${effectiveQueries.length} queries`,
+        'search',
+      );
+      await reporter.log(
+        'info',
+        `Normalized ${queryRewrites.length} queries pre-dispatch`,
+      );
+    }
+
+    // Phase B — on-empty retry: any query returning 0 results gets one
+    // relaxed retry (drop quotes, drop site:). Recovered hits replace the
+    // empty slot transparently.
+    const { response: rawResponse, retried: retriedQueries } = await executeWithRelaxRetry(
+      dispatchedQueries,
+      reporter,
+    );
     const response = filterScopedSearches(rawResponse, params.scope);
     await reporter.progress(50, 100, 'Collected search results');
 
@@ -444,7 +647,7 @@ export async function handleWebSearch(
     if (useRaw || !llmProcessor) {
       // Raw path: traditional unified ranked list
       if (!useRaw && !llmProcessor) {
-        llmError = 'LLM unavailable (LLM_EXTRACTION_API_KEY not set). Falling back to raw output.';
+        llmError = 'LLM unavailable (LLM_API_KEY / LLM_BASE_URL / LLM_MODEL not set). Falling back to raw output.';
         mcpLog('warning', llmError, 'search');
         // mcp-revisions/llm-degradation/01: surface degraded mode to the client.
         await reporter.log('warning', 'llm_classifier_unreachable: planner not configured; raw ranked list returned');
@@ -502,6 +705,7 @@ export async function handleWebSearch(
     const executionTime = Date.now() - startTime;
     const metadata = buildMetadata(
       aggregation, executionTime, response.totalQueries, response.searches, llmClassified, params.scope, llmError,
+      queryRewrites, retriedQueries,
     );
 
     // Build per-row structured results so capability-aware clients can
@@ -522,7 +726,7 @@ export async function handleWebSearch(
     const footer = `\n---\n*${formatDuration(executionTime)} | ${aggregation.totalUniqueUrls} unique URLs${llmClassified ? ' | LLM classified' : ''}*`;
     const fullMarkdown = markdown + footer;
 
-    return toolSuccess(fullMarkdown, { content: fullMarkdown, results, metadata });
+    return toolSuccess(fullMarkdown, { results, metadata });
   } catch (error) {
     return buildWebSearchError(error, params, startTime);
   }
@@ -534,7 +738,7 @@ export function registerWebSearchTool(server: MCPServer): void {
       name: 'web-search',
       title: 'Web Search',
       description:
-        'Fan out many Google searches in parallel (no hard cap), aggregate and deduplicate results, then classify each URL against your extract goal. Returns a tiered Markdown report: HIGHLY_RELEVANT / MAYBE_RELEVANT / OTHER with source_type and a per-result reason; plus a grounded synthesis with rank citations, a domain-independence confidence, a `## Gaps` list of what the current results do not answer, and `## Suggested follow-up searches` tied to gap ids (non-paraphrases of your prior queries). Think of `queries` as concept groups — diverse facets, not paraphrases. Set `raw=true` to skip classification and get an unclassified ranked list.',
+        'Fan out Google queries in parallel. One call carries up to 50 queries in a flat `queries` array — pack diverse facets (not paraphrases) into a single call. Call me AGGRESSIVELY across a session: 2–4 rounds is normal, 1 is underuse. After each pass, read `gaps[]` + `refine_queries[]` and fire another round with the new terms. Safe to call multiple times in parallel in the same turn for orthogonal subtopics. `scope`: `"reddit"` (server appends `site:reddit.com` + filters to post permalinks — use for sentiment / migration / lived experience), `"web"` default (spec / bug / pricing / CVE / API), `"both"` (fan each query across both — use when opinion-heavy AND needs official sources). Returns a tiered Markdown report (HIGHLY_RELEVANT / MAYBE_RELEVANT / OTHER) + grounded synthesis with `[rank]` citations + `## Gaps` + `## Suggested follow-up searches` tied to gap ids. Set `raw=true` to skip classification.',
       schema: webSearchParamsSchema,
       outputSchema: webSearchOutputSchema,
       annotations: {
@@ -542,34 +746,11 @@ export function registerWebSearchTool(server: MCPServer): void {
         idempotentHint: true,
         destructiveHint: false,
         openWorldHint: true,
-        // Non-standard precondition hint. mcp-use's ToolAnnotations type
-        // does not expose `experimental` natively (the SDK schema uses
-        // $strip) but the runtime forwards the whole annotations object
-        // verbatim. Cast keeps TS happy. See:
-        //   docs/code-review/context/04-session-and-workflow-state.md
-        //   mcp-revisions/contract-fixes/03-precondition-annotation-on-gated-tools.md
-        ...({ experimental: { requires: ['start-research'] } } as Record<string, unknown>),
       },
-      _meta: { requires: ['start-research'] },
     },
     async (args, ctx) => {
       if (!getCapabilities().search) {
         return toToolResponse(toolFailure(getMissingEnvMessage('search')));
-      }
-
-      const guard = await requireBootstrap(ctx);
-      if (guard) {
-        return guard;
-      }
-
-      // The keyword guard is only relevant for scope=web — when the caller
-      // explicitly asked for the reddit scope, "reddit" in the query is
-      // intentional context, not a tool-choice mistake.
-      if (args.scope === 'web') {
-        const redditGuard = await redditKeywordGuard(ctx, args.queries);
-        if (redditGuard) {
-          return redditGuard;
-        }
       }
 
       const reporter = createToolReporter(ctx, 'web-search');

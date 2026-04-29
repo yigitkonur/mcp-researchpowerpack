@@ -38,9 +38,10 @@ export const webSearchParamsSchema = z.object({
 export type WebSearchParams = z.infer<typeof webSearchParamsSchema>;
 
 export const webSearchOutputSchema = z.object({
-  content: z
-    .string()
-    .describe('Markdown report with tiered results (LLM mode) or ranked URL list (raw mode).'),
+  // `content` deliberately NOT duplicated here — the primary markdown lives in
+  // the MCP tool result's `content[0].text`. Previously this schema echoed the
+  // whole markdown under `structuredContent.content`, doubling token cost for
+  // clients that forward both fields to an LLM.
   results: z
     .array(z.object({
       rank: z.number().int().positive().describe('1-based rank in the merged ranking.'),
@@ -78,6 +79,23 @@ export const webSearchOutputSchema = z.object({
       .array(z.string())
       .optional()
       .describe('Queries that produced 0-1 results.'),
+    query_rewrites: z
+      .array(z.object({
+        original: z.string().describe('The query as the agent submitted it.'),
+        rewritten: z.string().describe('The query as dispatched to Google after Phase A normalization.'),
+        rules: z.array(z.string()).describe('Rule ids applied (A1=operator-char de-quote, A2=path/URL de-quote, A3=phrase-AND collapse).'),
+      }))
+      .optional()
+      .describe('Pre-dispatch query rewrites — Phase A normalizations (operator-char and path/URL de-quote, phrase-AND → anchor + OR collapse).'),
+    retried_queries: z
+      .array(z.object({
+        original: z.string().describe('The query as dispatched (post-Phase-A) that returned 0 results.'),
+        retried_with: z.string().describe('The relaxed form retried after the empty initial response.'),
+        rules: z.array(z.string()).describe('Rule ids applied (B1=strip all quotes, B2=drop site: filter).'),
+        recovered_results: z.number().int().nonnegative().describe('How many hits the retry produced; 0 means the retry also failed.'),
+      }))
+      .optional()
+      .describe('On-empty retries — Phase B relaxations applied after the initial Serper batch returned 0 results for a query.'),
   }).strict(),
 }).strict();
 
