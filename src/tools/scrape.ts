@@ -1,11 +1,22 @@
 /**
  * Scrape Links Tool Handler
- * Implements robust error handling that NEVER crashes the MCP server
+ *
+ * Scrapes many URLs in parallel. Reddit permalinks (reddit.com/r/.../comments/...)
+ * are auto-detected and routed through the Reddit API; all other URLs go through
+ * the scraper. Both branches feed the same per-URL LLM extraction pipeline.
+ *
+ * NEVER throws — every error is returned as a tool-level failure response.
  */
 
 import type { MCPServer } from 'mcp-use/server';
 
-import { SCRAPER, CONCURRENCY, getCapabilities, getMissingEnvMessage } from '../config/index.js';
+import {
+  SCRAPER,
+  CONCURRENCY,
+  getCapabilities,
+  getMissingEnvMessage,
+  parseEnv,
+} from '../config/index.js';
 import {
   scrapeLinksOutputSchema,
   scrapeLinksParamsSchema,
@@ -13,20 +24,21 @@ import {
   type ScrapeLinksOutput,
 } from '../schemas/scrape-links.js';
 import { ScraperClient } from '../clients/scraper.js';
+import { RedditClient, type PostResult } from '../clients/reddit.js';
+import { JinaClient } from '../clients/jina.js';
 import { MarkdownCleaner } from '../services/markdown-cleaner.js';
 import { createLLMProcessor, processContentWithLLM } from '../services/llm-processor.js';
 import { removeMetaTags } from '../utils/markdown-formatter.js';
 import { extractReadableContent } from '../utils/content-extractor.js';
-import { classifyError } from '../utils/errors.js';
-import { pMap } from '../utils/concurrency.js';
+import { classifyError, ErrorCode } from '../utils/errors.js';
+import { isDocumentUrl } from '../utils/source-type.js';
+import { pMap, pMapSettled } from '../utils/concurrency.js';
 import {
   mcpLog,
   formatSuccess,
   formatError,
   formatBatchHeader,
   formatDuration,
-  TOKEN_BUDGETS,
-  calculateTokenAllocation,
 } from './utils.js';
 import {
   createToolReporter,
@@ -37,31 +49,26 @@ import {
   type ToolExecutionResult,
   type ToolReporter,
 } from './mcp-helpers.js';
-import { requireBootstrap } from '../utils/bootstrap-guard.js';
 
-// Module-level singleton - MarkdownCleaner is stateless
 const markdownCleaner = new MarkdownCleaner();
-
-// Extraction prefix/suffix are kept in runtime config to avoid YAML indirection.
-function getExtractionPrefix(): string {
-  return SCRAPER.EXTRACTION_PREFIX;
-}
-
-function getExtractionSuffix(): string {
-  return SCRAPER.EXTRACTION_SUFFIX;
-}
 
 function enhanceExtractionInstruction(instruction: string | undefined): string {
   const base = instruction || 'Extract the main content and key information from this page.';
-  return `${getExtractionPrefix()}\n\n${base}\n\n${getExtractionSuffix()}`;
+  return `${SCRAPER.EXTRACTION_PREFIX}\n\n${base}\n\n${SCRAPER.EXTRACTION_SUFFIX}`;
 }
 
-// --- Internal types for decomposed helpers ---
+// --- Types ---
 
 interface ProcessedResult {
   url: string;
   content: string;
-  index: number;
+  index: number; // original position in params.urls[]
+  /**
+   * Cleaned markdown captured before LLM extraction. Preserved so the handler
+   * can fall back to it when the LLM emits the terse "Page did not load: X"
+   * escape line and would otherwise nuke the scraped body.
+   */
+  rawContent?: string;
 }
 
 interface ScrapeMetrics {
@@ -76,18 +83,65 @@ interface ScrapePhaseResult {
   metrics: ScrapeMetrics;
 }
 
+interface BranchInput {
+  url: string;
+  origIndex: number;
+}
+
 interface ScrapeClients {
   client: ScraperClient;
+  jinaClient: JinaClient;
   llmProcessor: ReturnType<typeof createLLMProcessor>;
 }
 
-// --- Helpers ---
+/**
+ * Any URL the web branch decides to hand off to Jina Reader — either because
+ * Scrape.do returned a binary content-type, or because Scrape.do failed
+ * outright (non-404 error). `scrapeError` is preserved so that, if Jina also
+ * fails, the final error message can surface both layers.
+ *
+ * Genuine 404s are NOT put here — the URL doesn't exist; Jina won't help.
+ */
+interface JinaFallback {
+  url: string;
+  origIndex: number;
+  reason: 'binary_content' | 'scrape_failed';
+  scrapeError?: string;
+}
+
+interface WebPhaseResult extends ScrapePhaseResult {
+  jinaFallbacks: JinaFallback[];
+}
+
+// --- Reddit URL detection ---
+
+const REDDIT_HOST = /(?:^|\.)reddit\.com$/i;
+const REDDIT_POST_PERMALINK = /\/r\/[^/]+\/comments\/[a-z0-9]+/i;
+
+function isRedditUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return REDDIT_HOST.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isRedditPostPermalink(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return REDDIT_HOST.test(u.hostname) && REDDIT_POST_PERMALINK.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
+// --- Error helper ---
 
 function createScrapeErrorResponse(
   code: string,
   message: string,
   startTime: number,
-  totalUrls: number,
   retryable = false,
   alternatives?: string[],
 ): ToolExecutionResult<ScrapeLinksOutput> {
@@ -103,76 +157,115 @@ function createScrapeErrorResponse(
   );
 }
 
-/** Reddit subdomains that should be routed to get-reddit-post instead. */
-const REDDIT_HOST = /(?:^|\.)reddit\.com$/i;
+// --- URL partitioning ---
 
-function isRedditUrl(url: string): boolean {
-  try {
-    return REDDIT_HOST.test(new URL(url).hostname);
-  } catch {
-    return false;
-  }
+interface PartitionedUrls {
+  webInputs: BranchInput[];
+  redditInputs: BranchInput[];
+  documentInputs: BranchInput[];
+  invalidEntries: { url: string; origIndex: number }[];
 }
 
-function validateAndPartitionUrls(urls: string[]): { validUrls: string[]; invalidUrls: string[] } {
-  const validUrls: string[] = [];
-  const invalidUrls: string[] = [];
-  for (const url of urls) {
+function partitionUrls(urls: string[]): PartitionedUrls {
+  const webInputs: BranchInput[] = [];
+  const redditInputs: BranchInput[] = [];
+  const documentInputs: BranchInput[] = [];
+  const invalidEntries: { url: string; origIndex: number }[] = [];
+
+  for (let i = 0; i < urls.length; i++) {
+    const url = urls[i]!;
     try {
       new URL(url);
-      validUrls.push(url);
     } catch {
-      invalidUrls.push(url);
+      invalidEntries.push({ url, origIndex: i });
+      continue;
+    }
+    // Document URLs (.pdf/.docx/.pptx/.xlsx) go straight to Jina Reader —
+    // bypassing Scrape.do because it cannot decode binary bodies. Ordered
+    // before the Reddit check so a hypothetical PDF on a reddit-adjacent host
+    // still takes the document path.
+    if (isDocumentUrl(url)) {
+      documentInputs.push({ url, origIndex: i });
+    } else if (isRedditUrl(url)) {
+      redditInputs.push({ url, origIndex: i });
+    } else {
+      webInputs.push({ url, origIndex: i });
     }
   }
-  return { validUrls, invalidUrls };
+
+  return { webInputs, redditInputs, documentInputs, invalidEntries };
 }
 
-function initializeScrapeClients(): ScrapeClients {
-  const client = new ScraperClient();
-  const llmProcessor = createLLMProcessor();
-  return { client, llmProcessor };
-}
+// --- Web branch ---
 
-function processScrapeResults(
-  results: Awaited<ReturnType<ScraperClient['scrapeMultiple']>>,
-  invalidUrls: string[],
-): ScrapePhaseResult {
+async function fetchWebBranch(
+  inputs: BranchInput[],
+  client: ScraperClient,
+): Promise<WebPhaseResult> {
+  if (inputs.length === 0) {
+    return {
+      successItems: [],
+      failedContents: [],
+      metrics: { successful: 0, failed: 0, totalCredits: 0 },
+      jinaFallbacks: [],
+    };
+  }
+
+  mcpLog('info', `[concurrency] web branch: fanning out ${inputs.length} URL(s) with limit=${CONCURRENCY.SCRAPER}`, 'scrape');
+  const urls = inputs.map((i) => i.url);
+  const results = await client.scrapeMultiple(urls, { timeout: 60 });
+  const urlToIndex = new Map(inputs.map((i) => [i.url, i.origIndex]));
+
   const successItems: ProcessedResult[] = [];
   const failedContents: string[] = [];
+  const jinaFallbacks: JinaFallback[] = [];
   let successful = 0;
   let failed = 0;
   let totalCredits = 0;
 
-  for (const invalidUrl of invalidUrls) {
-    failed++;
-    failedContents.push(`## ${invalidUrl}\n\n❌ Invalid URL format`);
-  }
-
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
+    const origIndex = inputs[i]!.origIndex;
     if (!result) {
       failed++;
-      failedContents.push(`## Unknown URL\n\n❌ No result returned`);
+      failedContents.push(`## ${inputs[i]!.url}\n\n❌ No result returned`);
       continue;
     }
 
-    mcpLog('debug', `[${i + 1}/${results.length}] Processing ${result.url}`, 'scrape');
+    // Binary document detected by content-type — defer to Jina Reader.
+    if (result.error?.code === ErrorCode.UNSUPPORTED_BINARY_CONTENT) {
+      jinaFallbacks.push({
+        url: result.url,
+        origIndex: urlToIndex.get(result.url) ?? origIndex,
+        reason: 'binary_content',
+      });
+      continue;
+    }
 
-    if (result.error || result.statusCode < 200 || result.statusCode >= 300) {
+    // Scrape.do failure — only 404s are treated as hard fails (Jina won't
+    // help when the page genuinely doesn't exist). Every other failure mode
+    // (302 redirect loops, WAF blocks, timeouts, 5xx, service unavailable)
+    // gets a second chance through Jina Reader, which uses different IPs
+    // and handles many anti-bot surfaces differently.
+    const scrapeFailed = Boolean(result.error) || result.statusCode < 200 || result.statusCode >= 300;
+    if (scrapeFailed && result.statusCode !== 404) {
+      jinaFallbacks.push({
+        url: result.url,
+        origIndex: urlToIndex.get(result.url) ?? origIndex,
+        reason: 'scrape_failed',
+        scrapeError: result.error?.message || result.content || `HTTP ${result.statusCode}`,
+      });
+      continue;
+    }
+    if (scrapeFailed) {
       failed++;
-      const errorMsg = result.error?.message || result.content || `HTTP ${result.statusCode}`;
-      failedContents.push(`## ${result.url}\n\n❌ Failed to scrape: ${errorMsg}`);
-      mcpLog('warning', `[${i + 1}/${results.length}] Failed: ${errorMsg}`, 'scrape');
+      failedContents.push(`## ${result.url}\n\n❌ Failed to scrape: HTTP 404 — Page not found`);
       continue;
     }
 
     successful++;
     totalCredits += result.credits;
 
-    // Strip HTML chrome (cookie banners, nav, footer, repeated hero blocks)
-    // BEFORE LLM extraction. Same pipeline applies to the raw fallback.
-    // See: docs/code-review/context/02-current-tool-surface.md (E5).
     let content: string;
     try {
       const readable = extractReadableContent(result.content, result.url);
@@ -182,59 +275,301 @@ function processScrapeResults(
       content = result.content;
     }
 
-    successItems.push({ url: result.url, content, index: i });
+    successItems.push({ url: result.url, content, index: origIndex, rawContent: content });
   }
 
-  return { successItems, failedContents, metrics: { successful, failed, totalCredits } };
+  return {
+    successItems,
+    failedContents,
+    metrics: { successful, failed, totalCredits },
+    jinaFallbacks,
+  };
 }
+
+// --- Document branch (Jina Reader) ---
+
+/**
+ * Format a Jina-failure line. If the URL was deferred here *after* Scrape.do
+ * already failed, surface both layers' errors so the caller can see that this
+ * isn't just a Jina glitch — the primary path failed too.
+ *
+ * Exported for unit testing.
+ */
+export function formatJinaFailure(url: string, jinaError: string, scrapeError?: string): string {
+  if (scrapeError) {
+    return `## ${url}\n\n❌ Both scrapers failed. Scrape.do: ${scrapeError}. Jina Reader: ${jinaError}.`;
+  }
+  return `## ${url}\n\n❌ Document conversion failed: ${jinaError}`;
+}
+
+async function fetchDocumentBranch(
+  inputs: BranchInput[],
+  jinaClient: JinaClient,
+  /** Optional: map url → original Scrape.do error, for fallback messaging. */
+  scrapeErrorContext?: Map<string, string>,
+): Promise<ScrapePhaseResult> {
+  if (inputs.length === 0) {
+    return { successItems: [], failedContents: [], metrics: { successful: 0, failed: 0, totalCredits: 0 } };
+  }
+
+  mcpLog(
+    'info',
+    `[concurrency] document branch (jina): converting ${inputs.length} URL(s) with limit=${CONCURRENCY.SCRAPER}`,
+    'scrape',
+  );
+
+  const results = await pMapSettled(
+    inputs,
+    (input) => jinaClient.convert({ url: input.url }),
+    CONCURRENCY.SCRAPER,
+  );
+
+  const successItems: ProcessedResult[] = [];
+  const failedContents: string[] = [];
+  let successful = 0;
+  let failed = 0;
+
+  for (let i = 0; i < results.length; i++) {
+    const settled = results[i];
+    const input = inputs[i]!;
+    const scrapeError = scrapeErrorContext?.get(input.url);
+    if (!settled) {
+      failed++;
+      failedContents.push(formatJinaFailure(input.url, 'No result returned', scrapeError));
+      continue;
+    }
+    if (settled.status === 'rejected') {
+      failed++;
+      const reason = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
+      failedContents.push(formatJinaFailure(input.url, reason, scrapeError));
+      continue;
+    }
+
+    const result = settled.value;
+    if (result.error || result.statusCode < 200 || result.statusCode >= 300) {
+      failed++;
+      const errorMsg = result.error?.message || `HTTP ${result.statusCode}`;
+      failedContents.push(formatJinaFailure(input.url, errorMsg, scrapeError));
+      continue;
+    }
+
+    successful++;
+    successItems.push({ url: input.url, content: result.content, index: input.origIndex, rawContent: result.content });
+  }
+
+  return { successItems, failedContents, metrics: { successful, failed, totalCredits: 0 } };
+}
+
+// --- Reddit branch ---
+
+function formatRedditPostAsMarkdown(result: PostResult): string {
+  const { post, comments } = result;
+  const lines: string[] = [];
+  lines.push(`# ${post.title}`);
+  lines.push('');
+  lines.push(`**r/${post.subreddit}** • u/${post.author} • ⬆️ ${post.score} • 💬 ${post.commentCount} comments`);
+  lines.push(`🔗 ${post.url}`);
+  lines.push('');
+  if (post.body) {
+    lines.push('## Post content');
+    lines.push('');
+    lines.push(post.body);
+    lines.push('');
+  }
+  if (comments.length > 0) {
+    lines.push(`## Top comments (${comments.length} total)`);
+    lines.push('');
+    for (const c of comments) {
+      const indent = '  '.repeat(c.depth);
+      const op = c.isOP ? ' **[OP]**' : '';
+      const score = c.score >= 0 ? `+${c.score}` : `${c.score}`;
+      lines.push(`${indent}- **u/${c.author}**${op} _(${score})_`);
+      for (const line of c.body.split('\n')) {
+        lines.push(`${indent}  ${line}`);
+      }
+      lines.push('');
+    }
+  }
+  return lines.join('\n');
+}
+
+async function fetchRedditBranch(inputs: BranchInput[]): Promise<ScrapePhaseResult> {
+  if (inputs.length === 0) {
+    return { successItems: [], failedContents: [], metrics: { successful: 0, failed: 0, totalCredits: 0 } };
+  }
+
+  const env = parseEnv();
+  if (!env.REDDIT_CLIENT_ID || !env.REDDIT_CLIENT_SECRET) {
+    const failedContents = inputs.map(
+      (i) => `## ${i.url}\n\n❌ Reddit URL detected, but Reddit API is not configured. Set \`REDDIT_CLIENT_ID\` and \`REDDIT_CLIENT_SECRET\` in the server env to enable threaded Reddit scraping.`,
+    );
+    return {
+      successItems: [],
+      failedContents,
+      metrics: { successful: 0, failed: inputs.length, totalCredits: 0 },
+    };
+  }
+
+  // Warn for non-permalink Reddit URLs (subreddit homepages, /new, /top, /hot,
+  // user profiles). The Reddit API path we call requires /r/.../comments/... —
+  // reject upfront so the caller sees a helpful message instead of a 404.
+  const [postInputs, nonPermalinks] = inputs.reduce<[BranchInput[], BranchInput[]]>(
+    ([posts, rest], input) => {
+      if (isRedditPostPermalink(input.url)) posts.push(input);
+      else rest.push(input);
+      return [posts, rest];
+    },
+    [[], []],
+  );
+
+  const nonPermalinkFailed = nonPermalinks.map(
+    (i) => `## ${i.url}\n\n❌ Only Reddit post permalinks (/r/<sub>/comments/<id>/...) are supported. Use web-search with scope:"reddit" to discover post permalinks first.`,
+  );
+
+  if (postInputs.length === 0) {
+    return {
+      successItems: [],
+      failedContents: nonPermalinkFailed,
+      metrics: { successful: 0, failed: nonPermalinks.length, totalCredits: 0 },
+    };
+  }
+
+  mcpLog('info', `[concurrency] reddit branch: fetching ${postInputs.length} post(s) with limit=${CONCURRENCY.REDDIT}`, 'scrape');
+  const client = new RedditClient(env.REDDIT_CLIENT_ID, env.REDDIT_CLIENT_SECRET);
+  const urls = postInputs.map((i) => i.url);
+  const batchResult = await client.batchGetPosts(urls, true);
+  const urlToIndex = new Map(postInputs.map((i) => [i.url, i.origIndex]));
+
+  const successItems: ProcessedResult[] = [];
+  const failedContents: string[] = [...nonPermalinkFailed];
+  let successful = 0;
+  let failed = nonPermalinks.length;
+
+  for (const [url, result] of batchResult.results) {
+    const origIndex = urlToIndex.get(url) ?? -1;
+    if (result instanceof Error) {
+      failed++;
+      failedContents.push(`## ${url}\n\n❌ Reddit fetch failed: ${result.message}`);
+      continue;
+    }
+    successful++;
+    const md = formatRedditPostAsMarkdown(result);
+    successItems.push({ url, content: md, index: origIndex, rawContent: md });
+  }
+
+  return { successItems, failedContents, metrics: { successful, failed, totalCredits: 0 } };
+}
+
+// --- Terse-LLM-escape detection + raw fallback merger ---
+
+/**
+ * The LLM extraction prompt tells the model to emit a single terse line when
+ * a page "clearly failed to load" (login walls, JS-render-empty, paywalls,
+ * etc.). In practice the LLM over-triggers this on partially-rendered pages,
+ * causing scrape-links to return a one-line verdict and discard the cleaned
+ * markdown. This detector + merger keep the verdict but re-attach a capped
+ * slice of the raw markdown so the caller always has something to work with.
+ */
+const TERSE_LLM_FAILURE_RE =
+  /^\s*##\s*Matches\s*\n+\s*_Page did not load:\s*([a-z0-9_-]+)_\s*\.?\s*$/i;
+
+/** Cap on the raw-markdown slice appended under "## Raw content ..." */
+export const RAW_FALLBACK_CHAR_CAP = 4000;
+
+/**
+ * If `llmOutput` is exactly the terse "## Matches\n_Page did not load: X_"
+ * line, return the reason token (e.g. "login-wall"). Otherwise null.
+ */
+export function detectTerseFailure(llmOutput: string): string | null {
+  const m = llmOutput.trim().match(TERSE_LLM_FAILURE_RE);
+  return m ? m[1]! : null;
+}
+
+/**
+ * When the LLM emitted the terse escape line, append a capped slice of the
+ * raw cleaned markdown under a `## Raw content (...)` section so the caller
+ * still has the actual scraped body to inspect. No-op otherwise.
+ */
+export function mergeLlmWithRawFallback(
+  llmOutput: string,
+  rawContent: string | undefined,
+): string {
+  const reason = detectTerseFailure(llmOutput);
+  if (!reason) return llmOutput;
+  const trimmed = rawContent?.trim();
+  if (!trimmed) return llmOutput;
+  const snippet =
+    trimmed.length > RAW_FALLBACK_CHAR_CAP
+      ? trimmed.slice(0, RAW_FALLBACK_CHAR_CAP) + '\n\n…[raw truncated]'
+      : trimmed;
+  return `${llmOutput.trim()}\n\n## Raw content (LLM flagged page as ${reason})\n\n${snippet}`;
+}
+
+// --- LLM extraction (shared by both branches) ---
 
 async function processItemsWithLlm(
   successItems: ProcessedResult[],
-  enhancedInstruction: string,
-  tokensPerUrl: number,
+  enhancedInstruction: string | undefined,
   llmProcessor: ReturnType<typeof createLLMProcessor>,
   reporter: ToolReporter,
 ): Promise<{ items: ProcessedResult[]; llmErrors: number; llmAttempted: number }> {
   let llmErrors = 0;
 
+  // Raw-mode bypass: caller omitted `extract` → return cleaned markdown as-is.
+  if (!enhancedInstruction) {
+    if (successItems.length > 0) {
+      mcpLog('info', 'Raw mode: extract omitted — returning cleaned scraped content without LLM pass', 'scrape');
+    }
+    return { items: successItems, llmErrors, llmAttempted: 0 };
+  }
+
   if (!llmProcessor || successItems.length === 0) {
     if (!llmProcessor && successItems.length > 0) {
-      mcpLog('warning', 'LLM unavailable (LLM_EXTRACTION_API_KEY not set). Returning raw scraped content.', 'scrape');
-      // Surface degraded mode to the client. See:
-      //   mcp-revisions/llm-degradation/01-signal-degraded-via-ctx-log.md
+      mcpLog('warning', 'LLM unavailable (LLM_API_KEY not set). Returning raw scraped content.', 'scrape');
       void reporter.log('warning', 'llm_extractor_unreachable: planner not configured; raw scraped content returned');
     }
     return { items: successItems, llmErrors, llmAttempted: 0 };
   }
 
-  mcpLog('info', `Starting parallel LLM extraction for ${successItems.length} pages (concurrency: ${CONCURRENCY.LLM_EXTRACTION})`, 'scrape');
+  mcpLog('info', `[concurrency] llm extraction: fanning out ${successItems.length} item(s) with limit=${CONCURRENCY.LLM_EXTRACTION}`, 'scrape');
 
-  const llmResults = await pMap(successItems, async (item) => {
-    mcpLog('debug', `LLM extracting ${item.url} (${tokensPerUrl} tokens)...`, 'scrape');
+  const llmResults = await pMap(
+    successItems,
+    async (item) => {
+      mcpLog('debug', `LLM extracting ${item.url}...`, 'scrape');
 
-    const llmResult = await processContentWithLLM(
-      item.content,
-      { enabled: true, extract: enhancedInstruction, max_tokens: tokensPerUrl, url: item.url },
-      llmProcessor,
-    );
+      const llmResult = await processContentWithLLM(
+        item.content,
+        { enabled: true, extract: enhancedInstruction, url: item.url },
+        llmProcessor,
+      );
 
-    if (llmResult.processed) {
-      mcpLog('debug', `LLM extraction complete for ${item.url}`, 'scrape');
-      return { ...item, content: llmResult.content };
-    }
+      if (llmResult.processed) {
+        const merged = mergeLlmWithRawFallback(llmResult.content, item.rawContent);
+        if (merged !== llmResult.content) {
+          mcpLog('warning', `LLM emitted terse escape line for ${item.url} — preserved raw fallback`, 'scrape');
+          void reporter.log('warning', `llm_terse_escape: ${item.url} — preserving raw fallback`);
+        }
+        return { ...item, content: merged };
+      }
 
-    llmErrors++;
-    mcpLog('warning', `LLM extraction failed for ${item.url}: ${llmResult.error || 'unknown reason'}`, 'scrape');
-    void reporter.log('warning', `llm_extractor_unreachable: ${item.url} — ${llmResult.error || 'unknown reason'}`);
-    return item;
-  }, CONCURRENCY.LLM_EXTRACTION);
+      llmErrors++;
+      mcpLog('warning', `LLM extraction failed for ${item.url}: ${llmResult.error || 'unknown reason'}`, 'scrape');
+      void reporter.log('warning', `llm_extractor_unreachable: ${item.url} — ${llmResult.error || 'unknown reason'}`);
+      return item;
+    },
+    CONCURRENCY.LLM_EXTRACTION,
+  );
 
   return { items: llmResults, llmErrors, llmAttempted: successItems.length };
 }
 
+// --- Output assembly ---
+
 function assembleContentEntries(successItems: ProcessedResult[], failedContents: string[]): string[] {
+  const sorted = [...successItems].sort((a, b) => a.index - b.index);
   const contents = [...failedContents];
-  for (const item of successItems) {
+  for (const item of sorted) {
     let content = item.content;
     try {
       content = removeMetaTags(content);
@@ -246,37 +581,14 @@ function assembleContentEntries(successItems: ProcessedResult[], failedContents:
   return contents;
 }
 
-function buildScrapeMetadata(
-  params: ScrapeLinksParams,
-  metrics: ScrapeMetrics,
-  tokensPerUrl: number,
-  totalBatches: number,
-  executionTime: number,
-): ScrapeLinksOutput['metadata'] {
-  return {
-    total_items: params.urls.length,
-    successful: metrics.successful,
-    failed: metrics.failed,
-    execution_time_ms: executionTime,
-    total_credits: metrics.totalCredits,
-  };
-}
-
 function buildScrapeResponse(
   params: ScrapeLinksParams,
   contents: string[],
   metrics: ScrapeMetrics,
-  tokensPerUrl: number,
-  totalBatches: number,
   llmErrors: number,
   executionTime: number,
   llmAccounting: { llmAttempted: number; llmSucceeded: boolean },
 ): { content: string; structuredContent: ScrapeLinksOutput } {
-  // Be explicit about LLM accounting: how many URLs the LLM tried, how many
-  // succeeded, and whether the pass produced any value. Without this, the
-  // batch header reports `Successful: N + LLM extraction failures: N` and the
-  // caller can't tell whether the credits charged for the LLM pass produced
-  // anything.
   const llmExtras: Record<string, string | number> = {};
   if (llmAccounting.llmAttempted > 0) {
     const ok = llmAccounting.llmAttempted - llmErrors;
@@ -293,36 +605,33 @@ function buildScrapeResponse(
     totalItems: params.urls.length,
     successful: metrics.successful,
     failed: metrics.failed,
-    tokensPerItem: tokensPerUrl,
-    batches: totalBatches,
     extras: {
       'Credits used': metrics.totalCredits,
       ...llmExtras,
     },
   });
 
-  // No cookie-cutter "Next Steps" with literal `[...]` placeholders. The
-  // server omits the Next Steps block when there are no concrete suggestions
-  // to make. See: docs/code-review/context/07-derailment-evidence.md
-  // ([FOOTER-BAD]) and mcp-revisions/output-shaping/05.
   const formattedContent = formatSuccess({
     title: 'Scraping Complete',
     summary: batchHeader,
     data: contents.join('\n\n---\n\n'),
     metadata: {
       'Execution time': formatDuration(executionTime),
-      'Token budget': TOKEN_BUDGETS.SCRAPER.toLocaleString(),
     },
   });
 
-  const metadata = buildScrapeMetadata(params, metrics, tokensPerUrl, totalBatches, executionTime);
-  return { content: formattedContent, structuredContent: { content: formattedContent, metadata } };
+  const metadata: ScrapeLinksOutput['metadata'] = {
+    total_items: params.urls.length,
+    successful: metrics.successful,
+    failed: metrics.failed,
+    execution_time_ms: executionTime,
+    total_credits: metrics.totalCredits,
+  };
+  return { content: formattedContent, structuredContent: { metadata } };
 }
 
-/**
- * Handle scrape links request
- * NEVER throws - always returns a valid response with content and metadata
- */
+// --- Handler ---
+
 export async function handleScrapeLinks(
   params: ScrapeLinksParams,
   reporter: ToolReporter = NOOP_REPORTER,
@@ -330,103 +639,181 @@ export async function handleScrapeLinks(
   const startTime = Date.now();
 
   if (!params.urls || params.urls.length === 0) {
-    return createScrapeErrorResponse('NO_URLS', 'No URLs provided', startTime, params.urls?.length || 0);
+    return createScrapeErrorResponse('NO_URLS', 'No URLs provided', startTime);
   }
 
-  // Reddit URLs are structurally different (threaded comments, SPA shell,
-  // Cloudflare-fronted JSON API). Reject the entire batch so the caller
-  // re-routes to get-reddit-post — silent partial-routing is the
-  // [FOOTER-BAD] / [REDUNDANT] anti-pattern from the derailment evidence.
-  // See: mcp-revisions/tool-surface/03-reddit-url-routing-in-scrape-links.md
-  const redditUrls = params.urls.filter(isRedditUrl);
-  if (redditUrls.length > 0) {
+  const { webInputs, redditInputs, documentInputs, invalidEntries } = partitionUrls(params.urls);
+  const validCount = webInputs.length + redditInputs.length + documentInputs.length;
+
+  await reporter.log(
+    'info',
+    `Partitioned ${params.urls.length} URL(s): ${webInputs.length} web, ${redditInputs.length} reddit, ${documentInputs.length} document, ${invalidEntries.length} invalid`,
+  );
+
+  if (validCount === 0) {
     return createScrapeErrorResponse(
-      'UNSUPPORTED_URL_TYPE',
-      `scrape-links does not support Reddit URLs. Use get-reddit-post for: ${redditUrls.join(', ')}`,
+      'INVALID_URLS',
+      `All ${params.urls.length} URLs are invalid`,
       startTime,
-      params.urls.length,
       false,
       [
-        `get-reddit-post(urls=[${redditUrls.map((u) => `"${u}"`).join(', ')}]) — fetch threaded posts and comments directly`,
-        'web-search(queries=["..."], extract="...", scope: "reddit") — find Reddit post permalinks first if these URLs were guesses',
+        'web-search(queries=[...], extract="...") — search for valid URLs first, then scrape the results',
       ],
     );
   }
 
-  const { validUrls, invalidUrls } = validateAndPartitionUrls(params.urls);
-  await reporter.log('info', `Validated ${validUrls.length} scrapeable URL(s) and ${invalidUrls.length} invalid URL(s)`);
-
-  if (validUrls.length === 0) {
-    return createScrapeErrorResponse('INVALID_URLS', `All ${params.urls.length} URLs are invalid`, startTime, params.urls.length, false, [
-      'web-search(queries=["topic documentation", "topic guide"], extract="relevant documentation and guides") — search for valid URLs first, then scrape the results',
-      'web-search(queries=["topic recommendations"], extract="...", scope: "reddit") — find Reddit discussion permalinks to feed get-reddit-post instead',
-    ]);
-  }
-
-  const tokensPerUrl = calculateTokenAllocation(validUrls.length, TOKEN_BUDGETS.SCRAPER);
-  const totalBatches = Math.ceil(validUrls.length / SCRAPER.BATCH_SIZE);
-
-  mcpLog('info', `Starting scrape: ${validUrls.length} URL(s), ${tokensPerUrl} tokens/URL, ${totalBatches} batch(es)`, 'scrape');
+  mcpLog(
+    'info',
+    `Starting scrape: ${webInputs.length} web + ${redditInputs.length} reddit + ${documentInputs.length} document URL(s)`,
+    'scrape',
+  );
   await reporter.progress(15, 100, 'Preparing scraper clients');
 
-  let clients: ScrapeClients;
+  // Only initialize the Scrape.do client if we actually have HTML/web URLs.
+  // The Jina client is cheap (no auth needed) and always constructed so the
+  // document branch and the web→Jina fallback path both work uniformly.
+  let clients: ScrapeClients | null = null;
   try {
-    clients = initializeScrapeClients();
+    const jinaClient = new JinaClient();
+    if (webInputs.length > 0) {
+      clients = {
+        client: new ScraperClient(),
+        jinaClient,
+        llmProcessor: createLLMProcessor(),
+      };
+    } else {
+      clients = {
+        client: null as unknown as ScraperClient,
+        jinaClient,
+        llmProcessor: createLLMProcessor(),
+      };
+    }
   } catch (error) {
     const err = classifyError(error);
-    return createScrapeErrorResponse('CLIENT_INIT_FAILED', `Failed to initialize scraper: ${err.message}`, startTime, params.urls.length, false, [
-      'web-search(queries=["topic key findings", "topic summary", "topic overview"], extract="key findings and summary") — search for information instead of scraping',
-      'web-search(queries=["topic discussion", "topic recommendations"], extract="...", scope: "reddit") — get community insights as an alternative',
-    ]);
+    return createScrapeErrorResponse(
+      'CLIENT_INIT_FAILED',
+      `Failed to initialize scraper: ${err.message}`,
+      startTime,
+      false,
+      [
+        'web-search(queries=["topic key findings", "topic summary"], extract="key findings and summary") — search instead of scraping',
+      ],
+    );
   }
 
-  const enhancedInstruction = enhanceExtractionInstruction(params.extract);
+  // Only enhance + run LLM when caller supplied an extract instruction.
+  // Undefined → raw mode (cleaned markdown returned without LLM pass).
+  const enhancedInstruction = params.extract
+    ? enhanceExtractionInstruction(params.extract)
+    : undefined;
 
   await reporter.progress(35, 100, 'Fetching page content');
-  const results = await clients.client.scrapeMultiple(validUrls, { timeout: 60 });
-  mcpLog('info', `Scraping complete. Processing ${results.length} results...`, 'scrape');
-  await reporter.log('info', `Fetched ${results.length} scrape response(s) from the provider`);
-  await reporter.progress(60, 100, 'Cleaning and classifying scrape results');
 
-  const { successItems, failedContents, metrics } = processScrapeResults(results, invalidUrls);
+  // Phase 1 — run all three branches in parallel. Failures in one branch do
+  // not block the others. The web branch may surface URLs to reroute via
+  // `jinaFallbacks` (binary content-type OR non-404 Scrape.do failure),
+  // which Phase 2 re-runs through Jina Reader.
+  const emptyPhase: WebPhaseResult = {
+    successItems: [], failedContents: [],
+    metrics: { successful: 0, failed: 0, totalCredits: 0 },
+    jinaFallbacks: [],
+  };
+  const [webPhase, redditPhase, documentPhase] = await Promise.all([
+    webInputs.length > 0
+      ? fetchWebBranch(webInputs, clients.client)
+      : Promise.resolve<WebPhaseResult>(emptyPhase),
+    fetchRedditBranch(redditInputs),
+    fetchDocumentBranch(documentInputs, clients.jinaClient),
+  ]);
+
+  // Phase 2 — Jina Reader as a fallback for web-branch URLs that either
+  // returned binary content or failed outright on Scrape.do.
+  let deferredPhase: ScrapePhaseResult = {
+    successItems: [], failedContents: [],
+    metrics: { successful: 0, failed: 0, totalCredits: 0 },
+  };
+  if (webPhase.jinaFallbacks.length > 0) {
+    const binaryCount = webPhase.jinaFallbacks.filter((f) => f.reason === 'binary_content').length;
+    const failedCount = webPhase.jinaFallbacks.length - binaryCount;
+    await reporter.log(
+      'info',
+      `Rerouting ${webPhase.jinaFallbacks.length} URL(s) to Jina Reader: ${binaryCount} binary, ${failedCount} scrape-failed`,
+    );
+    const fallbackInputs: BranchInput[] = webPhase.jinaFallbacks.map((f) => ({
+      url: f.url,
+      origIndex: f.origIndex,
+    }));
+    const errorContext = new Map<string, string>(
+      webPhase.jinaFallbacks
+        .filter((f) => f.scrapeError !== undefined)
+        .map((f) => [f.url, f.scrapeError as string]),
+    );
+    deferredPhase = await fetchDocumentBranch(fallbackInputs, clients.jinaClient, errorContext);
+  }
+
+  const successItems = [
+    ...webPhase.successItems,
+    ...redditPhase.successItems,
+    ...documentPhase.successItems,
+    ...deferredPhase.successItems,
+  ];
+  const invalidFailed = invalidEntries.map(
+    ({ url }) => `## ${url}\n\n❌ Invalid URL format`,
+  );
+  const failedContents = [
+    ...invalidFailed,
+    ...webPhase.failedContents,
+    ...redditPhase.failedContents,
+    ...documentPhase.failedContents,
+    ...deferredPhase.failedContents,
+  ];
+  const metrics: ScrapeMetrics = {
+    successful:
+      webPhase.metrics.successful
+      + redditPhase.metrics.successful
+      + documentPhase.metrics.successful
+      + deferredPhase.metrics.successful,
+    failed:
+      invalidEntries.length
+      + webPhase.metrics.failed
+      + redditPhase.metrics.failed
+      + documentPhase.metrics.failed
+      + deferredPhase.metrics.failed,
+    totalCredits: webPhase.metrics.totalCredits,
+  };
+
+  await reporter.log('info', `Fetched ${metrics.successful} page(s), ${metrics.failed} failed`);
 
   if (successItems.length > 0) {
-    await reporter.progress(80, 100, 'Running LLM extraction over scraped pages');
+    await reporter.progress(80, 100, 'Running LLM extraction over fetched pages');
   }
+
   const { items: processedItems, llmErrors, llmAttempted } = await processItemsWithLlm(
-    successItems, enhancedInstruction, tokensPerUrl, clients.llmProcessor, reporter,
+    successItems,
+    enhancedInstruction,
+    clients.llmProcessor,
+    reporter,
   );
 
   const contents = assembleContentEntries(processedItems, failedContents);
   const executionTime = Date.now() - startTime;
 
-  mcpLog('info', `Completed: ${metrics.successful} successful, ${metrics.failed} failed, ${metrics.totalCredits} credits used`, 'scrape');
-  await reporter.log(
+  mcpLog(
     'info',
-    `Scrape completed with ${metrics.successful} success(es), ${metrics.failed} failure(s), and ${llmErrors} LLM extraction issue(s)`,
+    `Completed: ${metrics.successful} successful, ${metrics.failed} failed, ${metrics.totalCredits} credits used`,
+    'scrape',
   );
 
-  // Credit policy: when LLM was attempted but every URL failed extraction,
-  // we still report the failures but make the credit reality explicit in
-  // the batch header so callers don't see "credits used" without knowing
-  // they paid for a no-op LLM pass. See:
-  //   mcp-revisions/llm-degradation/03-extraction-failure-credit-policy.md
   const llmSucceeded = llmAttempted > 0 && llmErrors < llmAttempted;
   const result = buildScrapeResponse(
     params,
     contents,
     metrics,
-    tokensPerUrl,
-    totalBatches,
     llmErrors,
     executionTime,
     { llmAttempted, llmSucceeded },
   );
 
-  // Contract: every URL failed → return isError: true so callers that check
-  // response.isError can short-circuit. Partial success still resolves
-  // through toolSuccess so the agent sees both rows. See
-  // docs/code-review/context/02-current-tool-surface.md (E6).
   if (metrics.successful === 0 && metrics.failed > 0) {
     return toolFailure(result.content);
   }
@@ -440,7 +827,7 @@ export function registerScrapeLinksTool(server: MCPServer): void {
       name: 'scrape-links',
       title: 'Scrape Links',
       description:
-        'Scrape many web pages in parallel and run structured LLM extraction on each (no hard cap). Per-page output: `## Source` (URL + detected page type + date), `## Matches` (verbatim-preserved facts), `## Not found` (explicit gaps the page did not answer — kills hallucination), `## Follow-up signals` (new terms and referenced-but-unscraped URLs that feed the next research loop), optional `## Contradictions` and `## Truncation` footers. Extraction behavior adapts per page type (docs, github-thread, reddit, marketing, cve, paper, announcement, qa, blog, changelog, release-notes). Use the `extract` field to describe the shape of what you want, separated by `|`.',
+        'Fetch many URLs in parallel. With `extract` set, run per-URL structured LLM extraction (each page returns `## Source`, `## Matches` verbatim facts, `## Not found` gaps, `## Follow-up signals` new terms + referenced URLs); omit `extract` for raw mode (cleaned markdown per URL, no LLM pass). Auto-detects reddit.com post permalinks → Reddit API (threaded post + comments); PDF/DOCX/PPTX/XLSX → Jina Reader; everything else → HTTP scraper. Safe to call in parallel — group URLs by context rather than jamming unrelated batches together. Describe the SHAPE of what you want in `extract`, facets separated by `|` (e.g. `root cause | affected versions | fix | workarounds | timeline`).',
       schema: scrapeLinksParamsSchema,
       outputSchema: scrapeLinksOutputSchema,
       annotations: {
@@ -448,19 +835,11 @@ export function registerScrapeLinksTool(server: MCPServer): void {
         idempotentHint: true,
         destructiveHint: false,
         openWorldHint: true,
-        // See contract-fixes/03 — non-standard precondition hint.
-        ...({ experimental: { requires: ['start-research'] } } as Record<string, unknown>),
       },
-      _meta: { requires: ['start-research'] },
     },
     async (args, ctx) => {
       if (!getCapabilities().scraping) {
         return toToolResponse(toolFailure(getMissingEnvMessage('scraping')));
-      }
-
-      const guard = await requireBootstrap(ctx);
-      if (guard) {
-        return guard;
       }
 
       const reporter = createToolReporter(ctx, 'scrape-links');

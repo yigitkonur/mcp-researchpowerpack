@@ -15,6 +15,7 @@ import {
 import { calculateBackoff } from '../utils/retry.js';
 import { pMapSettled } from '../utils/concurrency.js';
 import { mcpLog } from '../utils/logger.js';
+import { isBinaryDocumentContentType } from '../utils/source-type.js';
 
 // ── Constants ──
 
@@ -142,6 +143,33 @@ export class ScraperClient {
 
         // SUCCESS: 2xx - Successful API call
         if (response.ok) {
+          // Content-Type gate: if the origin served a binary document format
+          // (PDF/DOCX/PPTX/XLSX/octet-stream), discard the body and surface
+          // UNSUPPORTED_BINARY_CONTENT so the tool handler can reroute this
+          // URL through the Jina Reader path. Reading binary as text produces
+          // mojibake that silently passes Readability + Turndown (both of which
+          // short-circuit on "no `<` tag") and contaminates the LLM.
+          const contentType = response.headers.get('content-type');
+          if (isBinaryDocumentContentType(contentType)) {
+            mcpLog(
+              'info',
+              `Binary document detected at ${url} (content-type: ${contentType}). Deferring to Jina Reader.`,
+              'scraper',
+            );
+            return {
+              content: `Binary document (${contentType ?? 'unknown'}); routed to Jina Reader`,
+              statusCode: 415,
+              credits: 0,
+              headers: Object.fromEntries(response.headers.entries()),
+              error: {
+                code: ErrorCode.UNSUPPORTED_BINARY_CONTENT,
+                message: `Scrape.do cannot decode ${contentType ?? 'this binary content-type'}`,
+                retryable: false,
+                statusCode: 415,
+              },
+            };
+          }
+
           return {
             content,
             statusCode: response.status,

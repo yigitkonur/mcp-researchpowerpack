@@ -13,21 +13,22 @@ export const scrapeLinksParamsSchema = z.object({
   urls: z
     .array(urlSchema)
     .min(1, { message: 'scrape-links: At least 1 URL required' })
-    .describe('Web page URLs to scrape and extract content from. Reddit URLs (`reddit.com/...`) are rejected with `UNSUPPORTED_URL_TYPE` — use get-reddit-post for `reddit.com/r/.../comments/...` permalinks.'),
+    .describe('URLs to fetch and extract in parallel. Reddit post permalinks (`reddit.com/r/<sub>/comments/<id>/...`) are auto-detected and routed through the Reddit API (threaded post + comments); every other URL flows through the HTTP scraper. Mix reddit + non-reddit URLs freely; both branches run concurrently. Prefer contextually grouped batches — call this tool multiple times in parallel when URL sets are unrelated, instead of one giant mixed batch.'),
   extract: z
     .string()
     .min(1, { message: 'scrape-links: extract cannot be empty' })
+    .optional()
     .describe(
-      'Semantic extraction instruction. Describe the SHAPE of what you want, separated by `|`. The extractor classifies each page (docs / github-thread / reddit / marketing / cve / paper / announcement / qa / blog / changelog / release-notes) and adjusts emphasis per type: preserves numbers/versions/stacktraces verbatim from docs and CVE pages, quotes Reddit/HN with attribution plus sentiment distribution, flags what the page did NOT answer in a "Not found" section, and surfaces referenced-but-unscraped URLs in a "Follow-up signals" bulletin that feeds the next research loop. Good examples: "root cause | affected versions | fix | workarounds | timeline"; "pricing tiers | rate limits | enterprise contact | free-tier quotas"; "maintainer decisions | accepted fix commits | stacktraces | resolved version".',
+      'OPTIONAL semantic extraction instruction. Describe the SHAPE of what you want, separated by `|`. When provided, the extractor classifies each page (docs / github-thread / reddit / marketing / cve / paper / announcement / qa / blog / changelog / release-notes) and adjusts emphasis per type: preserves numbers/versions/stacktraces verbatim from docs and CVE pages, quotes Reddit/HN with attribution plus sentiment distribution, flags what the page did NOT answer in a "Not found" section, and surfaces referenced-but-unscraped URLs in a "Follow-up signals" bulletin that feeds the next research loop. Good examples: "root cause | affected versions | fix | workarounds | timeline"; "pricing tiers | rate limits | enterprise contact | free-tier quotas"; "maintainer decisions | accepted fix commits | stacktraces | resolved version". Omit this argument to skip LLM extraction entirely and receive cleaned markdown for each URL (raw mode — cheaper, faster, and useful when you want the whole page rather than a filtered view).',
     ),
 }).strict();
 
 export type ScrapeLinksParams = z.infer<typeof scrapeLinksParamsSchema>;
 
 export const scrapeLinksOutputSchema = z.object({
-  content: z
-    .string()
-    .describe('LLM-extracted content from scraped pages per the extract instructions.'),
+  // `content` deliberately NOT duplicated here — the primary markdown lives in
+  // the MCP tool result's `content[0].text`. Previously this schema echoed the
+  // whole extraction output, doubling token cost for clients that forward both.
   metadata: z.object({
     total_items: z.number().int().nonnegative().describe('Number of URLs processed.'),
     successful: z.number().int().nonnegative().describe('URLs fetched successfully.'),
