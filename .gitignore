@@ -115,3 +115,6 @@ private/
 .codex-review-manifest.json.lock
 .codex-review-rounds/
 .continues-handoff.md
+*.claude-session*
+derailment-notes/
+to-delete/
