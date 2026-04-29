@@ -7,7 +7,6 @@ const TEST_PROTOCOL_VERSION = '2025-11-25' as const;
 const TOOL_NAMES = [
   'start-research',
   'web-search',
-  'get-reddit-post',
   'scrape-links',
 ] as const;
 
@@ -343,7 +342,7 @@ async function main(): Promise<void> {
       },
       sessionId,
     ));
-    assert.match(JSON.stringify(redditSentimentPromptJson.result), /get-reddit-post/);
+    assert.match(JSON.stringify(redditSentimentPromptJson.result), /scrape-links/);
     assert.match(JSON.stringify(redditSentimentPromptJson.result), /scope:\s*\\?"reddit\\?"/);
 
     // --- Compliance: annotations + outputSchema ---
@@ -421,16 +420,32 @@ async function main(): Promise<void> {
       'llm_extractor_ok',
       'planner_configured',
       'extractor_configured',
+      'consecutive_planner_failures',
+      'consecutive_extractor_failures',
     ]) {
       assert.ok(resourceText.includes(field), `expected health://status to include "${field}"`);
     }
 
     // /health HTTP endpoint surfaces the same fields for load-balancer probes.
     const healthFields = await fetch(`${baseUrl}/health`).then((r) => r.json());
-    assert.equal(typeof healthFields.llm_planner_ok, 'boolean');
-    assert.equal(typeof healthFields.llm_extractor_ok, 'boolean');
+    // *_ok is `boolean | null` — null means "never probed" (initial state);
+    // `false` means "probed and the last attempt failed".
+    const isBoolOrNull = (v: unknown): boolean => typeof v === 'boolean' || v === null;
+    assert.ok(isBoolOrNull(healthFields.llm_planner_ok), 'llm_planner_ok must be boolean|null');
+    assert.ok(isBoolOrNull(healthFields.llm_extractor_ok), 'llm_extractor_ok must be boolean|null');
     assert.equal(typeof healthFields.planner_configured, 'boolean');
     assert.equal(typeof healthFields.extractor_configured, 'boolean');
+    // Counters must be non-negative integers; they back the gate in start-research.
+    assert.ok(
+      Number.isInteger(healthFields.consecutive_planner_failures) &&
+        healthFields.consecutive_planner_failures >= 0,
+      'consecutive_planner_failures must be a non-negative integer',
+    );
+    assert.ok(
+      Number.isInteger(healthFields.consecutive_extractor_failures) &&
+        healthFields.consecutive_extractor_failures >= 0,
+      'consecutive_extractor_failures must be a non-negative integer',
+    );
 
     // contract-fixes/02: experimental.research_powerpack capability advertised
     // on initialize so capability-aware clients see it without calling tools.
@@ -460,31 +475,25 @@ async function main(): Promise<void> {
     assert.ok(capabilityJson.result?.isError, 'expected tool-level error result');
     assert.ok(JSON.stringify(capabilityJson.result).includes('SCRAPEDO_API_KEY'));
 
-    const blockedJson = await callTool(
-      baseUrl,
-      sessionId,
-      'web-search',
-      { queries: ['mcp server oauth'], extract: 'oauth support' },
-      6,
-    );
-    assert.equal(blockedJson.result?.isError, true);
-    assert.match(JSON.stringify(blockedJson.result), /start-research/);
-
     // Default mode (no LLM_API_KEY in test env) → degraded compact stub.
     const startedJson = await callTool(baseUrl, sessionId, 'start-research', {}, 7);
     assert.notEqual(startedJson.result?.isError, true);
-    assert.equal(typeof startedJson.result?.structuredContent?.content, 'string');
-    assert.match(JSON.stringify(startedJson.result), /Research session started/);
-    assert.match(JSON.stringify(startedJson.result), /scrape-links/);
-    // Degraded stub explicitly mentions the planner-offline state and the loop.
-    assert.match(JSON.stringify(startedJson.result), /LLM planner offline|compact stub/);
-    assert.match(JSON.stringify(startedJson.result), /search → scrape → verify → stop/);
-    // Stub should be dramatically smaller than the full playbook.
-    const stubBytes = JSON.stringify(startedJson.result?.structuredContent ?? {}).length;
+    // start-research carries no structuredContent (dedup v6.1): primary markdown
+    // lives in content[0].text, nothing structured to expose.
+    const startedText: string | undefined = startedJson.result?.content?.[0]?.text;
+    assert.equal(typeof startedText, 'string');
+    assert.equal(startedJson.result?.structuredContent, undefined, 'start-research must not emit structuredContent');
+    assert.match(startedText!, /Research session started/);
+    assert.match(startedText!, /scrape-links/);
+    assert.match(startedText!, /web-search/);
+    // Degraded stub explicitly mentions the planner-offline state.
+    assert.match(startedText!, /LLM planner offline|compact stub/);
+    // Stub should be dramatically smaller than the full playbook — size-bound
+    // against the primary markdown now that structuredContent is gone.
+    const stubBytes = (startedText ?? '').length;
     assert.ok(stubBytes < 2500, `expected degraded stub <2500 bytes, got ${stubBytes}`);
 
-    // Opting into the full playbook via include_playbook=true restores the
-    // verbose tactic reference (concept groups, research loop, Reddit branch).
+    // Opting into the full playbook via include_playbook=true restores the full tactic reference.
     const playbookJson = await callTool(
       baseUrl,
       sessionId,
@@ -493,38 +502,10 @@ async function main(): Promise<void> {
       71,
     );
     assert.notEqual(playbookJson.result?.isError, true);
-    assert.match(JSON.stringify(playbookJson.result), /Concept groups/);
-    assert.match(JSON.stringify(playbookJson.result), /research loop/i);
-    assert.match(JSON.stringify(playbookJson.result), /Reddit branch/);
-    assert.match(JSON.stringify(playbookJson.result), /semantic instruction|semantic/);
-
-    // The reddit-keyword guard fires for scope=web — agent should use scope:"reddit" instead.
-    const redditBlocked = await callTool(
-      baseUrl,
-      sessionId,
-      'web-search',
-      { queries: ['reddit typescript oauth tips'], extract: 'community advice' },
-      8,
-    );
-    assert.equal(redditBlocked.result?.isError, true);
-    assert.match(JSON.stringify(redditBlocked.result), /scope:\s*\\?"reddit\\?"/);
-
-    // The same query with scope="reddit" passes the guard (intentional Reddit scope).
-    const redditScoped = await callTool(
-      baseUrl,
-      sessionId,
-      'web-search',
-      { queries: ['typescript oauth tips'], extract: 'community advice', scope: 'reddit' },
-      9,
-    );
-    // Will likely error at the upstream search call (test env has no real
-    // SERPER backend) OR succeed with empty results — but it should NOT be
-    // blocked by the guard.
-    assert.doesNotMatch(
-      JSON.stringify(redditScoped.result ?? {}),
-      /Blocked query|wastes a turn/,
-      'expected scope:"reddit" call to bypass the keyword guard',
-    );
+    assert.match(JSON.stringify(playbookJson.result), /The 3 tools/);
+    assert.match(JSON.stringify(playbookJson.result), /The loop/);
+    assert.match(JSON.stringify(playbookJson.result), /Output discipline/);
+    assert.match(JSON.stringify(playbookJson.result), /parallel|Parallel/);
 
     // --- Schema rejection tests ---
     // web-search: requires queries + extract
@@ -535,12 +516,6 @@ async function main(): Promise<void> {
     assertToolInputRejected(
       await callTool(baseUrl, sessionId, 'web-search', { queries: ['test'] }, 10),
       'web-search missing extract',
-    );
-
-    // get-reddit-post: requires urls only
-    assertToolInputRejected(
-      await callTool(baseUrl, sessionId, 'get-reddit-post', { urls: [] }, 12),
-      'get-reddit-post empty URLs',
     );
 
     // scrape-links: requires urls + extract

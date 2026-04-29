@@ -10,20 +10,12 @@ import {
   InMemorySessionStore,
   InMemoryStreamManager,
   MCPServer,
-  RedisSessionStore,
-  RedisStreamManager,
   object,
   type ServerConfig,
 } from 'mcp-use/server';
-import { createClient, type RedisClientType } from 'redis';
 
 import { SERVER } from './src/config/index.js';
 import { getLLMHealth } from './src/services/llm-processor.js';
-import {
-  closeWorkflowStateStore,
-  configureWorkflowStateStore,
-  getWorkflowStateStore,
-} from './src/services/workflow-state.js';
 import { registerAllTools } from './src/tools/registry.js';
 
 const DEFAULT_PORT = 3000 as const;
@@ -130,57 +122,27 @@ function resolveAllowedOrigins(): string[] | undefined {
   return undefined;
 }
 
-async function buildSessionConfig(): Promise<{
+function buildSessionConfig(): {
   sessionConfig: Pick<ServerConfig, 'sessionStore' | 'streamManager'>;
   cleanupFns: CleanupFn[];
-}> {
-  const redisUrl = process.env.REDIS_URL?.trim();
-
-  if (!redisUrl) {
-    return {
-      sessionConfig: {
-        sessionStore: new InMemorySessionStore(),
-        streamManager: new InMemoryStreamManager(),
-      },
-      cleanupFns: [],
-    };
-  }
-
-  const commandClient = createClient({ url: redisUrl });
-  const pubSubClient = commandClient.duplicate();
-
-  await Promise.all([commandClient.connect(), pubSubClient.connect()]);
-
+} {
   return {
     sessionConfig: {
-      sessionStore: new RedisSessionStore({
-        client: commandClient as RedisClientType,
-      }),
-      streamManager: new RedisStreamManager({
-        client: commandClient as RedisClientType,
-        pubSubClient: pubSubClient as RedisClientType,
-      }),
+      sessionStore: new InMemorySessionStore(),
+      streamManager: new InMemoryStreamManager(),
     },
-    cleanupFns: [
-      async () => {
-        await pubSubClient.quit();
-      },
-      async () => {
-        await commandClient.quit();
-      },
-    ],
+    cleanupFns: [],
   };
 }
 
 function buildHealthPayload(server: MCPServer, startedAt: number) {
   const llm = getLLMHealth();
-  // Workflow-state size — when the in-memory store backs us, this is now
-  // bounded by the TTL sweep added in mcp-revisions/contract-fixes/04.
-  let workflowStateSize: number | null = null;
-  try {
-    const store = getWorkflowStateStore();
-    workflowStateSize = store.size?.() ?? null;
-  } catch { /* store not configured yet */ }
+  // Distinguish "never probed" (checkedAt === null) from "probed and failed"
+  // (checkedAt set, ok=false). The raw `lastPlannerOk` defaults to `false`
+  // at startup, which would mislead operators into thinking the LLM is
+  // broken before it has been exercised once.
+  const plannerOkForHealth = llm.lastPlannerCheckedAt === null ? null : llm.lastPlannerOk;
+  const extractorOkForHealth = llm.lastExtractorCheckedAt === null ? null : llm.lastExtractorOk;
   return {
     status: 'ok',
     name: SERVER.NAME,
@@ -188,17 +150,18 @@ function buildHealthPayload(server: MCPServer, startedAt: number) {
     transport: 'http',
     uptime_seconds: Math.floor((Date.now() - startedAt) / 1000),
     active_sessions: server.getActiveSessions().length,
-    workflow_state_size: workflowStateSize,
-    // LLM health — surfaced so capability-aware clients render degraded mode
-    // once at session start instead of parsing per-call footers.
-    llm_planner_ok: llm.lastPlannerOk,
-    llm_extractor_ok: llm.lastExtractorOk,
+    llm_planner_ok: plannerOkForHealth,
+    llm_extractor_ok: extractorOkForHealth,
     llm_planner_checked_at: llm.lastPlannerCheckedAt,
     llm_extractor_checked_at: llm.lastExtractorCheckedAt,
     llm_planner_error: llm.lastPlannerError,
     llm_extractor_error: llm.lastExtractorError,
     planner_configured: llm.plannerConfigured,
     extractor_configured: llm.extractorConfigured,
+    // Counter surfacing lets operators diagnose gate behavior from outside
+    // the process (see src/tools/start-research.ts for the gate semantics).
+    consecutive_planner_failures: llm.consecutivePlannerFailures,
+    consecutive_extractor_failures: llm.consecutiveExtractorFailures,
     timestamp: new Date().toISOString(),
   };
 }
@@ -212,8 +175,7 @@ async function main(): Promise<void> {
   const baseUrl = process.env.MCP_URL?.trim() || undefined;
   const allowedOrigins = resolveAllowedOrigins();
 
-  const { sessionConfig, cleanupFns } = await buildSessionConfig();
-  await configureWorkflowStateStore(process.env.REDIS_URL?.trim());
+  const { sessionConfig, cleanupFns } = buildSessionConfig();
 
   startupLogger.info(`Starting ${SERVER.NAME} v${SERVER.VERSION}`);
   startupLogger.info(`Binding HTTP server to ${host}:${port}`);
@@ -273,12 +235,8 @@ async function main(): Promise<void> {
               research_powerpack: {
                 planner_available: llm.plannerConfigured,
                 extractor_available: llm.extractorConfigured,
-                planner_model:
-                  process.env.LLM_MODEL ?? process.env.LLM_EXTRACTION_MODEL ?? null,
-                extractor_model:
-                  process.env.LLM_MODEL ?? process.env.LLM_EXTRACTION_MODEL ?? null,
-                // Tools that require start-research to bootstrap the session first.
-                requires_bootstrap: ['web-search', 'scrape-links', 'get-reddit-post'],
+                planner_model: process.env.LLM_MODEL ?? null,
+                extractor_model: process.env.LLM_MODEL ?? null,
               },
             },
           });
@@ -335,7 +293,6 @@ async function main(): Promise<void> {
     try {
       startupLogger.warn(`Shutdown signal received: ${signal}`);
       await server.close();
-      await closeWorkflowStateStore();
 
       for (const cleanupFn of cleanupFns) {
         await cleanupFn();

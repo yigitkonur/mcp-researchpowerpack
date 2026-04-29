@@ -1,18 +1,15 @@
 /**
- * Concurrency utilities for bounded parallel execution
- * Prevents CPU spikes and API rate limiting from unbounded Promise.all
+ * Thin wrappers around the `p-map` library for bounded parallel execution.
+ * Keeps the internal API stable (`pMap` / `pMapSettled`) while delegating
+ * scheduling and AbortSignal handling to `p-map@7`.
  */
 
+import pMapLib from 'p-map';
+
 /**
- * Execute async tasks with a concurrency limit (like p-map).
- * Processes items from the input array through the mapper function,
- * running at most `concurrency` tasks simultaneously.
- *
- * @param items - Array of items to process
- * @param mapper - Async function to apply to each item
- * @param concurrency - Maximum number of concurrent tasks (default: 6)
- * @param signal - Optional AbortSignal to cancel remaining work
- * @returns Array of results in the same order as input items
+ * Run `mapper` over `items` with at most `concurrency` in flight.
+ * Rejects with the first error the mapper throws — matches the prior
+ * hand-rolled semantics. Results preserve input order.
  */
 export async function pMap<T, R>(
   items: readonly T[],
@@ -21,49 +18,14 @@ export async function pMap<T, R>(
   signal?: AbortSignal,
 ): Promise<R[]> {
   if (items.length === 0) return [];
-
-  // Clamp concurrency to reasonable bounds
   const limit = Math.max(1, Math.min(concurrency, items.length));
-
-  const results: R[] = new Array(items.length);
-  let nextIndex = 0;
-  const internalAbort = new AbortController();
-
-  async function worker(): Promise<void> {
-    while (true) {
-      if (signal?.aborted || internalAbort.signal.aborted) {
-        throw new DOMException('Aborted', 'AbortError');
-      }
-      const index = nextIndex++;
-      if (index >= items.length) break;
-      try {
-        results[index] = await mapper(items[index]!, index);
-      } catch (err) {
-        internalAbort.abort(); // Signal other workers to stop picking up new work
-        throw err;
-      }
-    }
-  }
-
-  // Spawn `limit` workers that pull from the shared index
-  const workers: Promise<void>[] = [];
-  for (let i = 0; i < limit; i++) {
-    workers.push(worker());
-  }
-
-  await Promise.all(workers);
-  return results;
+  return pMapLib(items, mapper, { concurrency: limit, signal });
 }
 
 /**
- * Like pMap but uses Promise.allSettled semantics — never rejects,
- * returns PromiseSettledResult for each item.
- *
- * @param items - Array of items to process
- * @param mapper - Async function to apply to each item
- * @param concurrency - Maximum number of concurrent tasks (default: 6)
- * @param signal - Optional AbortSignal to cancel remaining work
- * @returns Array of PromiseSettledResult in the same order as input items
+ * Like `pMap` but never rejects — mapper errors surface as
+ * `{ status: 'rejected', reason }` entries. Useful when one per-item
+ * failure must not cancel the others (e.g. per-URL scraping).
  */
 export async function pMapSettled<T, R>(
   items: readonly T[],
@@ -72,38 +34,17 @@ export async function pMapSettled<T, R>(
   signal?: AbortSignal,
 ): Promise<PromiseSettledResult<R>[]> {
   if (items.length === 0) return [];
-
   const limit = Math.max(1, Math.min(concurrency, items.length));
-
-  const results: PromiseSettledResult<R>[] = new Array(items.length);
-  let nextIndex = 0;
-
-  async function worker(): Promise<void> {
-    while (nextIndex < items.length) {
-      if (signal?.aborted) break;
-      const index = nextIndex++;
+  return pMapLib(
+    items,
+    async (item, index): Promise<PromiseSettledResult<R>> => {
       try {
-        const value = await mapper(items[index]!, index);
-        results[index] = { status: 'fulfilled', value };
+        const value = await mapper(item, index);
+        return { status: 'fulfilled', value };
       } catch (reason) {
-        results[index] = { status: 'rejected', reason };
+        return { status: 'rejected', reason };
       }
-    }
-  }
-
-  const workers: Promise<void>[] = [];
-  for (let i = 0; i < limit; i++) {
-    workers.push(worker());
-  }
-
-  await Promise.all(workers);
-
-  // Fill any unprocessed items after abort
-  for (let i = 0; i < items.length; i++) {
-    if (results[i] === undefined) {
-      results[i] = { status: 'rejected', reason: new DOMException('Aborted', 'AbortError') };
-    }
-  }
-
-  return results;
+    },
+    { concurrency: limit, signal, stopOnError: false },
+  );
 }
