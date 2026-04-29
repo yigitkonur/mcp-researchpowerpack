@@ -8,6 +8,7 @@ node_modules/
 # ============================================
 build/
 dist/
+.build-remote/
 *.tsbuildinfo
 
 # ============================================
@@ -52,7 +53,8 @@ test-logs/
 .cache/
 .npm/
 .eslintcache
-.mcp-use/
+!.mcp-use/
+.mcp-use/*
 !.mcp-use/project.json
 
 # ============================================
@@ -61,6 +63,7 @@ test-logs/
 .super-agents/
 .agent-workspace/
 .agents/
+.claude/
 .augment/
 .codebuddy/
 .commandcode/
