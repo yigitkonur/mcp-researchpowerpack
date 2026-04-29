@@ -57,3 +57,59 @@ test('plannerConfigured / extractorConfigured reflect env capability', () => {
   assert.equal(typeof h.plannerConfigured, 'boolean');
   assert.equal(typeof h.extractorConfigured, 'boolean');
 });
+
+test('consecutive-failure counters start at 0', () => {
+  _resetLLMHealthForTests();
+  const h = getLLMHealth();
+  assert.equal(h.consecutivePlannerFailures, 0);
+  assert.equal(h.consecutiveExtractorFailures, 0);
+});
+
+test('markLLMFailure increments the matching consecutive counter', () => {
+  _resetLLMHealthForTests();
+  markLLMFailure('planner', 'first blip');
+  assert.equal(getLLMHealth().consecutivePlannerFailures, 1);
+  markLLMFailure('planner', 'second blip');
+  assert.equal(getLLMHealth().consecutivePlannerFailures, 2);
+  markLLMFailure('planner', 'third blip');
+  assert.equal(getLLMHealth().consecutivePlannerFailures, 3);
+  // Extractor counter is untouched.
+  assert.equal(getLLMHealth().consecutiveExtractorFailures, 0);
+});
+
+test('markLLMSuccess resets the matching consecutive counter to 0', () => {
+  _resetLLMHealthForTests();
+  markLLMFailure('planner', 'a');
+  markLLMFailure('planner', 'b');
+  markLLMFailure('planner', 'c');
+  assert.equal(getLLMHealth().consecutivePlannerFailures, 3);
+  markLLMSuccess('planner');
+  assert.equal(getLLMHealth().consecutivePlannerFailures, 0);
+  // A subsequent failure starts the count over at 1, not from the old value.
+  markLLMFailure('planner', 'd');
+  assert.equal(getLLMHealth().consecutivePlannerFailures, 1);
+});
+
+test('planner and extractor counters are independent', () => {
+  _resetLLMHealthForTests();
+  markLLMFailure('planner', 'p1');
+  markLLMFailure('planner', 'p2');
+  markLLMFailure('extractor', 'e1');
+  const h = getLLMHealth();
+  assert.equal(h.consecutivePlannerFailures, 2);
+  assert.equal(h.consecutiveExtractorFailures, 1);
+  // Succeeding one does not affect the other.
+  markLLMSuccess('extractor');
+  const h2 = getLLMHealth();
+  assert.equal(h2.consecutivePlannerFailures, 2);
+  assert.equal(h2.consecutiveExtractorFailures, 0);
+});
+
+test('_resetLLMHealthForTests zeroes the counters', () => {
+  markLLMFailure('planner', 'x');
+  markLLMFailure('extractor', 'y');
+  _resetLLMHealthForTests();
+  const h = getLLMHealth();
+  assert.equal(h.consecutivePlannerFailures, 0);
+  assert.equal(h.consecutiveExtractorFailures, 0);
+});

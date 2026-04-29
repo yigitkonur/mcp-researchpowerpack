@@ -1,7 +1,9 @@
 /**
  * LLM Processor for content extraction
- * Uses OpenRouter via OPENROUTER_API_KEY for AI-powered content filtering
- * Implements robust retry logic and NEVER throws
+ * Uses any OpenAI-compatible endpoint. Reasoning effort is always 'low'.
+ * Primary model exhausts its retries first; fallback model (LLM_FALLBACK_MODEL) then
+ * gets up to FALLBACK_RETRY_COUNT additional attempts before the call fails.
+ * NEVER throws — always returns a valid result.
  */
 
 import OpenAI from 'openai';
@@ -15,20 +17,27 @@ import {
 } from '../utils/errors.js';
 import { mcpLog } from '../utils/logger.js';
 
-/** Maximum input characters for LLM processing (~25k tokens) */
-const MAX_LLM_INPUT_CHARS = 100_000 as const;
+/** Maximum input characters for LLM processing (~125k tokens, sized for the larger fallback model) */
+const MAX_LLM_INPUT_CHARS = 500_000 as const;
+
+/**
+ * Maximum input characters for the primary model when it has a smaller context window.
+ * Used when an input would exceed the mini model's limits so the call goes straight to fallback
+ * instead of burning retries on guaranteed context_length_exceeded errors.
+ */
+const MAX_PRIMARY_MODEL_INPUT_CHARS = 100_000 as const;
 
 /** LLM client timeout in milliseconds */
-const LLM_CLIENT_TIMEOUT_MS = 120_000 as const;
+const LLM_CLIENT_TIMEOUT_MS = 600_000 as const;
 
 /** Jitter factor for exponential backoff */
 const BACKOFF_JITTER_FACTOR = 0.3 as const;
 
 /** Stall detection timeout — abort if no response in this time */
-const LLM_STALL_TIMEOUT_MS = 15_000 as const;
+const LLM_STALL_TIMEOUT_MS = 75_000 as const;
 
 /** Hard request deadline for LLM calls */
-const LLM_REQUEST_DEADLINE_MS = 30_000 as const;
+const LLM_REQUEST_DEADLINE_MS = 150_000 as const;
 
 // ============================================================================
 // LLM health tracking — surfaced via health://status so capability-aware
@@ -37,7 +46,7 @@ const LLM_REQUEST_DEADLINE_MS = 30_000 as const;
 
 type LLMHealthKind = 'planner' | 'extractor';
 
-interface LLMHealthSnapshot {
+export interface LLMHealthSnapshot {
   readonly lastPlannerOk: boolean;
   readonly lastExtractorOk: boolean;
   readonly lastPlannerCheckedAt: string | null;
@@ -46,6 +55,9 @@ interface LLMHealthSnapshot {
   readonly lastExtractorError: string | null;
   readonly plannerConfigured: boolean;
   readonly extractorConfigured: boolean;
+  /** Failures since the last success. Reset to 0 on `markLLMSuccess`. */
+  readonly consecutivePlannerFailures: number;
+  readonly consecutiveExtractorFailures: number;
 }
 
 const llmHealth = {
@@ -55,6 +67,8 @@ const llmHealth = {
   lastExtractorCheckedAt: null as string | null,
   lastPlannerError: null as string | null,
   lastExtractorError: null as string | null,
+  consecutivePlannerFailures: 0,
+  consecutiveExtractorFailures: 0,
 };
 
 export function markLLMSuccess(kind: LLMHealthKind): void {
@@ -63,10 +77,12 @@ export function markLLMSuccess(kind: LLMHealthKind): void {
     llmHealth.lastPlannerOk = true;
     llmHealth.lastPlannerCheckedAt = ts;
     llmHealth.lastPlannerError = null;
+    llmHealth.consecutivePlannerFailures = 0;
   } else {
     llmHealth.lastExtractorOk = true;
     llmHealth.lastExtractorCheckedAt = ts;
     llmHealth.lastExtractorError = null;
+    llmHealth.consecutiveExtractorFailures = 0;
   }
 }
 
@@ -77,10 +93,12 @@ export function markLLMFailure(kind: LLMHealthKind, err: unknown): void {
     llmHealth.lastPlannerOk = false;
     llmHealth.lastPlannerCheckedAt = ts;
     llmHealth.lastPlannerError = message;
+    llmHealth.consecutivePlannerFailures += 1;
   } else {
     llmHealth.lastExtractorOk = false;
     llmHealth.lastExtractorCheckedAt = ts;
     llmHealth.lastExtractorError = message;
+    llmHealth.consecutiveExtractorFailures += 1;
   }
 }
 
@@ -97,6 +115,8 @@ export function getLLMHealth(): LLMHealthSnapshot {
     // tells whether the last attempt actually succeeded.
     plannerConfigured: cap.llmExtraction,
     extractorConfigured: cap.llmExtraction,
+    consecutivePlannerFailures: llmHealth.consecutivePlannerFailures,
+    consecutiveExtractorFailures: llmHealth.consecutiveExtractorFailures,
   };
 }
 
@@ -108,12 +128,13 @@ export function _resetLLMHealthForTests(): void {
   llmHealth.lastExtractorCheckedAt = null;
   llmHealth.lastPlannerError = null;
   llmHealth.lastExtractorError = null;
+  llmHealth.consecutivePlannerFailures = 0;
+  llmHealth.consecutiveExtractorFailures = 0;
 }
 
 interface ProcessingConfig {
   readonly enabled: boolean;
   readonly extract: string | undefined;
-  readonly max_tokens?: number;
   readonly url?: string;
 }
 
@@ -131,7 +152,10 @@ const LLM_RETRY_CONFIG = {
   maxDelayMs: 5000,
 } as const;
 
-// OpenRouter/OpenAI specific retryable error codes (using Set for type-safe lookup)
+/** Number of additional attempts using the fallback model after primary exhausts. */
+const FALLBACK_RETRY_COUNT = 3 as const;
+
+// OpenAI-compatible retryable error codes (using Set for type-safe lookup)
 const RETRYABLE_LLM_ERROR_CODES = new Set([
   'rate_limit_exceeded',
   'server_error',
@@ -169,66 +193,85 @@ export function createLLMProcessor(): OpenAI | null {
   return llmClient;
 }
 
-function buildChatRequestBody(model: string, prompt: string, maxTokens: number): Record<string, unknown> {
-  const requestBody: Record<string, unknown> = {
+function buildChatRequestBody(model: string, prompt: string): Record<string, unknown> {
+  return {
     model,
     messages: [{ role: 'user', content: prompt }],
-    max_tokens: maxTokens,
+    reasoning_effort: 'low',
   };
-
-  if (LLM_EXTRACTION.REASONING_EFFORT !== 'none') {
-    requestBody.reasoning_effort = LLM_EXTRACTION.REASONING_EFFORT;
-  }
-
-  return requestBody;
 }
 
+export async function requestText(
+  processor: OpenAITextGenerator,
+  prompt: string,
+  operationLabel: string,
+  signal?: AbortSignal,
+  modelOverride?: string,
+): Promise<{ content: string | null; model: string; error?: string }> {
+  const model = modelOverride || LLM_EXTRACTION.MODEL;
+
+  try {
+    const response = await withStallProtection(
+      (stallSignal) => processor.chat.completions.create(
+        buildChatRequestBody(model, prompt) as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
+        {
+          signal: signal ? AbortSignal.any([stallSignal, signal]) : stallSignal,
+          timeout: LLM_REQUEST_DEADLINE_MS,
+        },
+      ),
+      LLM_STALL_TIMEOUT_MS,
+      3,
+      `${operationLabel} (${model})`,
+    );
+
+    const content = response.choices?.[0]?.message?.content?.trim();
+    if (content) {
+      return { content, model };
+    }
+
+    const err = `Empty response from model ${model}`;
+    mcpLog('warning', `${operationLabel} returned empty content for model ${model}`, 'llm');
+    return { content: null, model, error: err };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    mcpLog('warning', `${operationLabel} failed for model ${model}: ${message}`, 'llm');
+    return { content: null, model, error: message };
+  }
+}
+
+/**
+ * Single LLM call with automatic fallback model.
+ * Tries the primary model once; if it fails and LLM_FALLBACK_MODEL is set,
+ * retries up to FALLBACK_RETRY_COUNT times on the fallback model.
+ * Used for single-shot calls (classify, brief, refine queries).
+ */
 export async function requestTextWithFallback(
   processor: OpenAITextGenerator,
   prompt: string,
-  maxTokens: number,
   operationLabel: string,
   signal?: AbortSignal,
 ): Promise<{ content: string | null; model: string; error?: string }> {
-  const models = [...new Set([
-    LLM_EXTRACTION.MODEL,
-    LLM_EXTRACTION.FALLBACK_MODEL,
-  ].filter(Boolean))];
+  const primary = await requestText(processor, prompt, operationLabel, signal);
+  if (primary.content) return primary;
 
-  let lastError = 'Unknown LLM error';
+  const fallbackModel = LLM_EXTRACTION.FALLBACK_MODEL;
+  if (!fallbackModel) return primary;
 
-  for (const model of models) {
-    try {
-      const response = await withStallProtection(
-        (stallSignal) => processor.chat.completions.create(
-          buildChatRequestBody(model, prompt, maxTokens) as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
-          {
-            signal: signal ? AbortSignal.any([stallSignal, signal]) : stallSignal,
-            timeout: LLM_REQUEST_DEADLINE_MS,
-          },
-        ),
-        LLM_STALL_TIMEOUT_MS,
-        3,
-        `${operationLabel} (${model})`,
-      );
+  mcpLog('warning', `Primary model failed, switching to fallback ${fallbackModel}`, 'llm');
 
-      const content = response.choices?.[0]?.message?.content?.trim();
-      if (content) {
-        if (model !== LLM_EXTRACTION.MODEL) {
-          mcpLog('warning', `${operationLabel} succeeded with fallback model ${model}`, 'llm');
-        }
-        return { content, model };
-      }
-
-      lastError = `Empty response from model ${model}`;
-      mcpLog('warning', `${operationLabel} returned empty content for model ${model}`, 'llm');
-    } catch (err: unknown) {
-      lastError = err instanceof Error ? err.message : String(err);
-      mcpLog('warning', `${operationLabel} failed for model ${model}: ${lastError}`, 'llm');
+  let lastError = primary.error;
+  for (let attempt = 0; attempt < FALLBACK_RETRY_COUNT; attempt++) {
+    if (attempt > 0) {
+      const delayMs = calculateLLMBackoff(attempt - 1);
+      mcpLog('warning', `Fallback retry ${attempt}/${FALLBACK_RETRY_COUNT - 1} in ${delayMs}ms`, 'llm');
+      try { await sleep(delayMs, signal); } catch { break; }
     }
+    const result = await requestText(processor, prompt, `${operationLabel} [fallback]`, signal, fallbackModel);
+    if (result.content) return result;
+    lastError = result.error;
   }
 
-  return { content: null, model: LLM_EXTRACTION.FALLBACK_MODEL, error: lastError };
+  return { content: null, model: fallbackModel, error: lastError };
 }
 
 /**
@@ -250,7 +293,7 @@ function isRetryableLLMError(error: unknown): boolean {
     }
   }
 
-  // Check error codes from OpenAI/OpenRouter
+  // Check error codes from the OpenAI-compatible endpoint
   const record = error as Record<string, unknown>;
   const code = typeof record.code === 'string' ? record.code : undefined;
   const nested =
@@ -283,6 +326,42 @@ function isRetryableLLMError(error: unknown): boolean {
 }
 
 /**
+ * Detect "the prompt is too long for this model" errors.
+ * These are NOT retryable on the same model — we should skip remaining primary retries
+ * and go straight to the fallback model (which has a larger context window).
+ */
+function isContextWindowError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+
+  const record = error as Record<string, unknown>;
+  const nested =
+    typeof record.error === 'object' && record.error !== null
+      ? (record.error as Record<string, unknown>)
+      : null;
+
+  const code = typeof record.code === 'string' ? record.code : undefined;
+  const nestedCode = nested && typeof nested.code === 'string' ? nested.code : undefined;
+  if (code === 'context_length_exceeded' || nestedCode === 'context_length_exceeded') {
+    return true;
+  }
+
+  const messages: string[] = [];
+  if (typeof record.message === 'string') messages.push(record.message);
+  if (nested && typeof nested.message === 'string') messages.push(nested.message);
+  const combined = messages.join(' ').toLowerCase();
+  return (
+    combined.includes('context length') ||
+    combined.includes('context window') ||
+    combined.includes('maximum context') ||
+    combined.includes('maximum tokens') ||
+    combined.includes('token limit') ||
+    combined.includes('too many tokens') ||
+    combined.includes('prompt is too long') ||
+    combined.includes('reduce the length')
+  );
+}
+
+/**
  * Calculate backoff delay with jitter for LLM retries
  */
 function calculateLLMBackoff(attempt: number): number {
@@ -311,7 +390,7 @@ export async function processContentWithLLM(
     return {
       content,
       processed: false,
-      error: 'LLM processor not available (LLM_EXTRACTION_API_KEY or OPENROUTER_API_KEY not set)',
+      error: 'LLM processor not available (LLM_API_KEY, LLM_BASE_URL, and LLM_MODEL must all be set)',
       errorDetails: {
         code: ErrorCode.AUTH_ERROR,
         message: 'LLM processor not available',
@@ -324,10 +403,16 @@ export async function processContentWithLLM(
     return { content: content || '', processed: false, error: 'Empty content provided' };
   }
 
-  // Truncate extremely long content to avoid token limits
+  // Truncate extremely long content to avoid blowing past even the fallback model's context.
   const truncatedContent = content.length > MAX_LLM_INPUT_CHARS
     ? content.substring(0, MAX_LLM_INPUT_CHARS) + '\n\n[Content truncated due to length]'
     : content;
+
+  // If the prompt would exceed the primary (mini) model's smaller context window,
+  // skip it entirely and go straight to the fallback model. Saves burning retries
+  // on guaranteed context_length_exceeded errors.
+  const skipPrimaryForSize =
+    truncatedContent.length > MAX_PRIMARY_MODEL_INPUT_CHARS && !!LLM_EXTRACTION.FALLBACK_MODEL;
 
   // Sanitize URL before sending to LLM: drop query string and fragment
   // so signed URLs, session tokens, auth params, or tracking hashes never
@@ -391,13 +476,9 @@ RULES:
 - Preserve code blocks, command examples, tables exactly.
 - Do NOT add commentary or recommendations outside "Follow-up signals".
 - Page language ≠ English: quote verbatim in the original language AND provide a parenthetical gloss in English.
-- Content clearly failed to load: return ONLY a single line, choosing from:
-  \`## Matches\\n_Page did not load: 404_\`
-  \`## Matches\\n_Page did not load: login-wall_\`
-  \`## Matches\\n_Page did not load: paywall_\`
-  \`## Matches\\n_Page did not load: JS-render-empty_\`
-  \`## Matches\\n_Page did not load: non-text-asset_\`
-  \`## Matches\\n_Page did not load: truncated-before-relevant-section_\`
+- Page appears gated (login wall, paywall, JS-render-empty shell) or near-empty: BEFORE dismissing the page, look for ANY visible text — og:title, og:description, meta description, headline, author name, nav labels, teaser/preview sentences, visible comment snippets. If ANY such text exists, extract it as usual under \`## Source\` + \`## Matches\`, and list the blocked facets under \`## Not found\`. Prefix the first \`## Matches\` bullet with \`**[partial — <reason>]**\` so the caller knows the body is gated (reasons: \`login-wall | paywall | JS-render-empty | truncated-before-relevant-section\`). ONLY when there is NO visible extractable text at all (< 50 words AND no og:* AND no headline AND no preview), return exactly one line:
+  \`## Matches\\n_Page did not load: <reason>_\`
+  Valid reasons: \`404 | login-wall | paywall | JS-render-empty | non-text-asset | truncated-before-relevant-section\`.
 
 Content:
 ${truncatedContent}`
@@ -408,73 +489,103 @@ ${truncatedContent}`;
 
   let lastError: StructuredError | undefined;
 
-  // Retry loop
-  for (let attempt = 0; attempt <= LLM_RETRY_CONFIG.maxRetries; attempt++) {
-    try {
-      if (attempt === 0) {
-        mcpLog('info', `Starting extraction with ${LLM_EXTRACTION.MODEL}`, 'llm');
-      } else {
-        mcpLog('warning', `Retry attempt ${attempt}/${LLM_RETRY_CONFIG.maxRetries}`, 'llm');
+  // Phase 1: primary model with up to LLM_RETRY_CONFIG.maxRetries retries.
+  // Skip entirely when the input is too big for the primary's context window.
+  if (skipPrimaryForSize) {
+    mcpLog(
+      'info',
+      `Input ${truncatedContent.length} chars exceeds primary model cap (${MAX_PRIMARY_MODEL_INPUT_CHARS}); routing directly to fallback`,
+      'llm',
+    );
+  } else {
+    for (let attempt = 0; attempt <= LLM_RETRY_CONFIG.maxRetries; attempt++) {
+      try {
+        if (attempt === 0) {
+          mcpLog('info', `Starting extraction with ${LLM_EXTRACTION.MODEL}`, 'llm');
+        } else {
+          mcpLog('warning', `Retry attempt ${attempt}/${LLM_RETRY_CONFIG.maxRetries}`, 'llm');
+        }
+
+        const response = await requestText(processor, prompt, 'LLM extraction', signal);
+
+        if (response.content) {
+          mcpLog('info', `Successfully extracted ${response.content.length} characters`, 'llm');
+          markLLMSuccess('extractor');
+          return { content: response.content, processed: true };
+        }
+
+        // Empty response — not retryable
+        mcpLog('warning', 'Received empty response from LLM', 'llm');
+        markLLMFailure('extractor', 'LLM returned empty response');
+        return {
+          content,
+          processed: false,
+          error: 'LLM returned empty response',
+          errorDetails: {
+            code: ErrorCode.INTERNAL_ERROR,
+            message: 'LLM returned empty response',
+            retryable: false,
+          },
+        };
+
+      } catch (err: unknown) {
+        lastError = classifyError(err);
+        const status = hasStatus(err) ? err.status : undefined;
+        const code = typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as Record<string, unknown>).code)
+          : undefined;
+        const ctxErr = isContextWindowError(err);
+        mcpLog('error', `Error (attempt ${attempt + 1}): ${lastError.message} [status=${status}, code=${code}, retryable=${isRetryableLLMError(err)}, context_window=${ctxErr}]`, 'llm');
+
+        // Context window errors are not retryable on the same model — jump to fallback.
+        if (ctxErr) {
+          mcpLog('warning', 'Context window exceeded on primary — skipping remaining retries, routing to fallback', 'llm');
+          break;
+        }
+
+        if (isRetryableLLMError(err) && attempt < LLM_RETRY_CONFIG.maxRetries) {
+          const delayMs = calculateLLMBackoff(attempt);
+          mcpLog('warning', `Retrying in ${delayMs}ms...`, 'llm');
+          try { await sleep(delayMs, signal); } catch { break; }
+          continue;
+        }
+        break;
       }
-
-      const response = await requestTextWithFallback(
-        processor,
-        prompt,
-        config.max_tokens || LLM_EXTRACTION.MAX_TOKENS,
-        'LLM extraction',
-        signal,
-      );
-
-      if (response.content) {
-        mcpLog('info', `Successfully extracted ${response.content.length} characters`, 'llm');
-        markLLMSuccess('extractor');
-        return { content: response.content, processed: true };
-      }
-
-      // Empty response - not retryable
-      mcpLog('warning', 'Received empty response from LLM', 'llm');
-      markLLMFailure('extractor', 'LLM returned empty response');
-      return {
-        content,
-        processed: false,
-        error: 'LLM returned empty response',
-        errorDetails: {
-          code: ErrorCode.INTERNAL_ERROR,
-          message: 'LLM returned empty response',
-          retryable: false,
-        },
-      };
-
-    } catch (err: unknown) {
-      lastError = classifyError(err);
-
-      // Log the error
-      const status = hasStatus(err) ? err.status : undefined;
-      const code = typeof err === 'object' && err !== null && 'code' in err
-        ? String((err as Record<string, unknown>).code)
-        : undefined;
-      mcpLog('error', `Error (attempt ${attempt + 1}): ${lastError.message} [status=${status}, code=${code}, retryable=${isRetryableLLMError(err)}]`, 'llm');
-
-      // Check if we should retry
-      if (isRetryableLLMError(err) && attempt < LLM_RETRY_CONFIG.maxRetries) {
-        const delayMs = calculateLLMBackoff(attempt);
-        mcpLog('warning', `Retrying in ${delayMs}ms...`, 'llm');
-        try { await sleep(delayMs, signal); } catch { break; }
-        continue;
-      }
-
-      // Non-retryable or max retries reached
-      break;
     }
   }
 
-  // All attempts failed - return original content with error info
+  // Phase 2: fallback model — FALLBACK_RETRY_COUNT attempts before giving up
+  const fallbackModel = LLM_EXTRACTION.FALLBACK_MODEL;
+  if (fallbackModel) {
+    mcpLog('warning', `Primary exhausted, switching to fallback ${fallbackModel}`, 'llm');
+    for (let attempt = 0; attempt < FALLBACK_RETRY_COUNT; attempt++) {
+      if (attempt > 0) {
+        const delayMs = calculateLLMBackoff(attempt - 1);
+        mcpLog('warning', `Fallback retry ${attempt}/${FALLBACK_RETRY_COUNT - 1} in ${delayMs}ms`, 'llm');
+        try { await sleep(delayMs, signal); } catch { break; }
+      }
+      try {
+        const response = await requestText(processor, prompt, 'LLM extraction [fallback]', signal, fallbackModel);
+        if (response.content) {
+          mcpLog('info', `Fallback extracted ${response.content.length} characters`, 'llm');
+          markLLMSuccess('extractor');
+          return { content: response.content, processed: true };
+        }
+        mcpLog('warning', 'Fallback returned empty response', 'llm');
+        break;
+      } catch (err: unknown) {
+        lastError = classifyError(err);
+        mcpLog('error', `Fallback error (attempt ${attempt + 1}): ${lastError.message}`, 'llm');
+      }
+    }
+  }
+
   const errorMessage = lastError?.message || 'Unknown LLM error';
   mcpLog('error', `All attempts failed: ${errorMessage}. Returning original content.`, 'llm');
   markLLMFailure('extractor', errorMessage);
 
   return {
-    content, // Return original content as fallback
+    content,
     processed: false,
     error: `LLM extraction failed: ${errorMessage}`,
     errorDetails: lastError || {
@@ -549,7 +660,14 @@ export async function classifySearchResults(
 ): Promise<{ result: ClassificationResult | null; error?: string }> {
   const urlsToClassify = rankedUrls.slice(0, MAX_CLASSIFICATION_URLS);
 
-  // Build compressed result list — title + domain + snippet (truncated)
+  // Descending static weights fed to the LLM. Higher-ranked URLs get a bigger
+  // weight so the classifier biases HIGHLY_RELEVANT toward them. The weights
+  // here are a shown-to-LLM summary, not the internal CTR ranking (which
+  // still runs in url-aggregator.ts). Rank 11+ all bucket to w=1.
+  const STATIC_WEIGHTS = [30, 20, 15, 10, 8, 6, 5, 4, 3, 2] as const;
+  const weightForRank = (rank: number): number => STATIC_WEIGHTS[rank - 1] ?? 1;
+
+  // Build compressed result list — weight + title + domain + snippet (truncated)
   const lines: string[] = [];
   for (const url of urlsToClassify) {
     let domain: string;
@@ -561,7 +679,7 @@ export async function classifySearchResults(
     const snippet = url.snippet.length > 120
       ? url.snippet.slice(0, 117) + '...'
       : url.snippet;
-    lines.push(`[${url.rank}] ${url.title} — ${domain} — ${snippet}`);
+    lines.push(`[${url.rank}] w=${weightForRank(url.rank)} ${url.title} — ${domain} — ${snippet}`);
   }
 
   const prevQueriesBlock = previousQueries.length > 0
@@ -600,6 +718,8 @@ Return ONLY a JSON object (no markdown, no code fences):
   ]
 }
 
+WEIGHT SCHEME: each row is prefixed with a weight (w=N). Higher weight means the URL ranked better across input queries — prefer HIGHLY_RELEVANT for high-weight rows when content matches the objective. Weight alone never justifies HIGHLY_RELEVANT; snippet cues still drive the decision.
+
 SOURCE-OF-TRUTH RUBRIC (the "primary source" is goal-dependent — infer goal type from the objective):
 - spec / API / config questions → vendor_doc, github (README, RFC), release_notes are primary
 - bug / failure-mode questions → github (issue/PR), stackoverflow are primary
@@ -636,14 +756,9 @@ ${lines.join('\n')}`;
   try {
     mcpLog('info', `Classifying ${urlsToClassify.length} URLs against objective`, 'llm');
 
-    // Output budget needs room for: 50 results × (rank + tier + source_type + reason)
-    // plus gaps[] with descriptions, refine_queries[] with rationales, synthesis with citations,
-    // title, confidence, and confidence_reason. 4000 truncates JSON mid-structure for full outputs;
-    // 8000 leaves headroom for the richest cases.
     const response = await requestTextWithFallback(
       processor,
       prompt,
-      8000,
       'Search classification',
     );
 
@@ -726,7 +841,6 @@ RULES:
     const response = await requestTextWithFallback(
       processor,
       prompt,
-      800,
       'Raw-mode refine query generation',
     );
 
@@ -753,23 +867,24 @@ RULES:
 // Research Brief — goal-aware orientation (called by start-research)
 // ============================================================================
 
-export interface ResearchBriefConceptGroup {
-  readonly facet: string;
-  readonly queries: readonly string[];
+export type PrimaryBranch = 'reddit' | 'web' | 'both';
+
+export interface ResearchBriefStep {
+  readonly tool: 'web-search' | 'scrape-links';
+  readonly reason: string;
 }
 
 export interface ResearchBrief {
   readonly goal_class: string;
   readonly goal_class_reason: string;
-  readonly source_priority: readonly string[];
-  readonly sources_to_deprioritize: readonly string[];
-  readonly fire_reddit_branch: boolean;
-  readonly fire_reddit_reason: string;
+  readonly primary_branch: PrimaryBranch;
+  readonly primary_branch_reason: string;
   readonly freshness_window: string;
-  readonly concept_groups: readonly ResearchBriefConceptGroup[];
-  readonly anticipated_gaps: readonly string[];
-  readonly first_scrape_targets: readonly string[];
-  readonly success_criteria: readonly string[];
+  readonly first_call_sequence: readonly ResearchBriefStep[];
+  readonly keyword_seeds: readonly string[];
+  readonly iteration_hints: readonly string[];
+  readonly gaps_to_watch: readonly string[];
+  readonly stop_criteria: readonly string[];
 }
 
 const VALID_GOAL_CLASSES = new Set([
@@ -778,21 +893,22 @@ const VALID_GOAL_CLASSES = new Set([
 ]);
 
 const VALID_FRESHNESS = new Set(['days', 'weeks', 'months', 'years']);
+const VALID_BRANCHES = new Set<PrimaryBranch>(['reddit', 'web', 'both']);
+const VALID_STEP_TOOLS = new Set(['web-search', 'scrape-links']);
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === 'string');
 }
 
-function isConceptGroupArray(value: unknown): value is ResearchBriefConceptGroup[] {
-  return Array.isArray(value) && value.every((g) => {
-    if (typeof g !== 'object' || g === null) return false;
-    const facet = (g as Record<string, unknown>).facet;
-    const queries = (g as Record<string, unknown>).queries;
-    return typeof facet === 'string'
-      && facet.trim().length > 0
-      && isStringArray(queries)
-      && queries.length > 0
-      && queries.every((q) => q.trim().length > 0);
+function isStepArray(value: unknown): value is ResearchBriefStep[] {
+  return Array.isArray(value) && value.every((s) => {
+    if (typeof s !== 'object' || s === null) return false;
+    const tool = (s as Record<string, unknown>).tool;
+    const reason = (s as Record<string, unknown>).reason;
+    return typeof tool === 'string'
+      && VALID_STEP_TOOLS.has(tool)
+      && typeof reason === 'string'
+      && reason.trim().length > 0;
   });
 }
 
@@ -807,21 +923,23 @@ export function parseResearchBrief(raw: string): ResearchBrief | null {
     const freshness_window = typeof parsed.freshness_window === 'string' ? parsed.freshness_window : null;
     if (!freshness_window || !VALID_FRESHNESS.has(freshness_window)) return null;
 
-    if (typeof parsed.fire_reddit_branch !== 'boolean') return null;
-    if (!isConceptGroupArray(parsed.concept_groups) || parsed.concept_groups.length === 0) return null;
+    const primary_branch = parsed.primary_branch;
+    if (typeof primary_branch !== 'string' || !VALID_BRANCHES.has(primary_branch as PrimaryBranch)) return null;
+
+    if (!isStepArray(parsed.first_call_sequence) || parsed.first_call_sequence.length === 0) return null;
+    if (!isStringArray(parsed.keyword_seeds) || parsed.keyword_seeds.length === 0) return null;
 
     return {
       goal_class,
       goal_class_reason: typeof parsed.goal_class_reason === 'string' ? parsed.goal_class_reason : '',
-      source_priority: isStringArray(parsed.source_priority) ? parsed.source_priority : [],
-      sources_to_deprioritize: isStringArray(parsed.sources_to_deprioritize) ? parsed.sources_to_deprioritize : [],
-      fire_reddit_branch: parsed.fire_reddit_branch,
-      fire_reddit_reason: typeof parsed.fire_reddit_reason === 'string' ? parsed.fire_reddit_reason : '',
+      primary_branch: primary_branch as PrimaryBranch,
+      primary_branch_reason: typeof parsed.primary_branch_reason === 'string' ? parsed.primary_branch_reason : '',
       freshness_window,
-      concept_groups: parsed.concept_groups,
-      anticipated_gaps: isStringArray(parsed.anticipated_gaps) ? parsed.anticipated_gaps : [],
-      first_scrape_targets: isStringArray(parsed.first_scrape_targets) ? parsed.first_scrape_targets : [],
-      success_criteria: isStringArray(parsed.success_criteria) ? parsed.success_criteria : [],
+      first_call_sequence: parsed.first_call_sequence,
+      keyword_seeds: parsed.keyword_seeds.filter((s) => s.trim().length > 0),
+      iteration_hints: isStringArray(parsed.iteration_hints) ? parsed.iteration_hints : [],
+      gaps_to_watch: isStringArray(parsed.gaps_to_watch) ? parsed.gaps_to_watch : [],
+      stop_criteria: isStringArray(parsed.stop_criteria) ? parsed.stop_criteria : [],
     };
   } catch {
     return null;
@@ -835,7 +953,12 @@ export async function generateResearchBrief(
 ): Promise<ResearchBrief | null> {
   const today = new Date().toISOString().slice(0, 10);
 
-  const prompt = `You are a research planner. An agent is about to run a multi-pass research loop on the goal below. Produce a tailored research brief in JSON.
+  const prompt = `You are a research planner. An agent is about to run a multi-pass research loop on the goal below using 3 tools:
+
+  - web-search: fan-out Google, scope: web|reddit|both, up to 50 queries per call, parallel-callable (multiple calls per turn)
+  - scrape-links: fetch URLs in parallel, auto-detects reddit.com post permalinks → Reddit API (threaded post+comments); all other URLs → HTTP scraper; parallel-callable
+
+Produce a tailored JSON brief.
 
 GOAL: ${goal}
 TODAY: ${today}
@@ -845,36 +968,46 @@ Return ONLY a JSON object (no markdown, no code fences):
 {
   "goal_class": "spec | bug | migration | sentiment | pricing | security | synthesis | product_launch | other",
   "goal_class_reason": "one sentence — why this class",
-  "source_priority": ["ordered list from: vendor_docs, changelog, github_code, github_issues, reddit, hackernews, blogs, marketing_pages, stackoverflow, cve_databases, arxiv, news, release_notes"],
-  "sources_to_deprioritize": ["same vocabulary — sources that add noise for this goal"],
-  "fire_reddit_branch": true,
-  "fire_reddit_reason": "one sentence — why yes or why no",
+  "primary_branch": "reddit | web | both",
+  "primary_branch_reason": "one sentence — why this branch leads",
   "freshness_window": "days | weeks | months | years",
-  "concept_groups": [
-    {
-      "facet": "2-4 word facet name",
-      "queries": ["5-10 concrete Google queries using operators where helpful: site:, quotes, version numbers"]
-    }
+  "first_call_sequence": [
+    { "tool": "web-search | scrape-links", "reason": "what this call establishes for the agent" }
   ],
-  "anticipated_gaps": ["2-5 things likely missing after pass 1 that the agent should watch for"],
-  "first_scrape_targets": ["domain names or URL patterns most likely to contain the answer"],
-  "success_criteria": ["2-4 concrete facts the agent must verify before declaring done"]
+  "keyword_seeds": ["25–50 concrete Google queries — flat list, to be fired in the first web-search call"],
+  "iteration_hints": ["2–5 pointers on which harvested terms / follow-up signals to watch for after pass 1"],
+  "gaps_to_watch": ["2–5 concrete questions the agent MUST verify or the answer is incomplete"],
+  "stop_criteria": ["2–4 checkable conditions — all must hold before the agent declares done"]
 }
 
-Rules:
-- Concept groups must probe DIFFERENT facets. Same noun-phrase cannot repeat across groups.
-- Queries within a group vary by operator/phrasing but probe the same facet.
-- Total queries across all groups: 25–50. Narrow bugs fewer; open synthesis more.
-- If the goal mentions a recent release / date / version, freshness_window = days or weeks.
-- Do NOT invent vendor names you are uncertain exist. Leave shaky queries out.
-- source_priority MUST reflect the goal type — docs for spec, github_issues for bugs, reddit/hackernews/blogs for migration/sentiment, cve_databases for security.
-- fire_reddit_branch should be false for CVE / pricing / API spec / primary-source lookups.`;
+RULES:
+
+primary_branch:
+- "reddit"  → sentiment / migration / lived-experience / community-consensus goals. Leads with scope:"reddit" web-search.
+- "web"     → spec / bug / pricing / CVE / API / primary-source goals. Leads with scope:"web" web-search.
+- "both"    → opinion-heavy AND needs official sources (e.g. product launch + practitioner reception).
+
+first_call_sequence:
+- 1–3 steps.
+- reddit-first: step 1 = web-search (caller sets scope:"reddit"), step 2 = scrape-links on best post permalinks.
+- web-first:    step 1 = web-search (scope:"web"), step 2 = scrape-links on HIGHLY_RELEVANT URLs.
+- both:         step 1 = two parallel web-search calls (one scope:"reddit", one scope:"web"), step 2 = merged scrape-links.
+
+keyword_seeds:
+- 25–50 total. Narrow bug → fewer. Open synthesis → more.
+- Use operators where helpful (site:, quotes, verbatim version numbers).
+- DIVERSE facets — same noun-phrase cannot repeat across seeds with adjectives-only variation.
+- Do NOT invent vendor names you are uncertain exist.
+- For \`site:<domain>\` filters, ONLY use domains you are highly confident are real. Safe choices: \`github.com\`, \`stackoverflow.com\`, \`reddit.com\`, \`news.ycombinator.com\`, \`arxiv.org\`, \`nvd.nist.gov\`, \`pypi.org\`, \`npmjs.com\`, plus any canonical homepage/docs domain explicitly spelled out in the goal itself (e.g. goal names "Cursor" → \`cursor.com\`/\`docs.cursor.com\` is acceptable). If you don't know the product's real docs domain, leave the query open (no \`site:\`) instead of guessing.
+
+freshness_window:
+- If the goal mentions a recent release / date / version, use "days" or "weeks".
+- Stable protocols / APIs → "months" or "years".`;
 
   try {
     const response = await requestTextWithFallback(
       processor,
       prompt,
-      2500,
       'Research brief generation',
       signal,
     );
@@ -908,55 +1041,47 @@ export function renderResearchBrief(brief: ResearchBrief): string {
   lines.push('## Your research brief (goal-tailored)');
   lines.push('');
   lines.push(`**Goal class**: \`${brief.goal_class}\` — ${brief.goal_class_reason}`);
-  lines.push(`**Freshness target**: \`${brief.freshness_window}\``);
-  lines.push(`**Reddit branch**: ${brief.fire_reddit_branch ? '**fire**' : 'skip'} — ${brief.fire_reddit_reason}`);
+  lines.push(`**Primary branch**: \`${brief.primary_branch}\` — ${brief.primary_branch_reason}`);
+  lines.push(`**Freshness**: \`${brief.freshness_window}\``);
   lines.push('');
 
-  if (brief.source_priority.length > 0) {
-    lines.push('**Source priority** (highest → lowest):');
-    brief.source_priority.forEach((src, i) => lines.push(`${i + 1}. \`${src}\``));
+  if (brief.first_call_sequence.length > 0) {
+    lines.push('### First-call sequence');
+    brief.first_call_sequence.forEach((step, i) => {
+      lines.push(`${i + 1}. \`${step.tool}\` — ${step.reason}`);
+    });
     lines.push('');
   }
 
-  if (brief.sources_to_deprioritize.length > 0) {
-    lines.push(`**Deprioritize**: ${brief.sources_to_deprioritize.map((s) => `\`${s}\``).join(', ')}`);
-    lines.push('');
-  }
-
-  lines.push('### Pass 1 concept groups');
-  lines.push('');
-  lines.push('Issue every query below in ONE `web-search` call (flat array).');
-  lines.push('');
-
-  for (const group of brief.concept_groups) {
-    lines.push(`#### ${group.facet}`);
-    for (const query of group.queries) {
-      lines.push(`- ${query}`);
+  if (brief.keyword_seeds.length > 0) {
+    lines.push(`### Keyword seeds (${brief.keyword_seeds.length}) — fire these in your first \`web-search\` call as a flat \`queries\` array`);
+    for (const seed of brief.keyword_seeds) {
+      lines.push(`- ${seed}`);
     }
     lines.push('');
   }
 
-  if (brief.anticipated_gaps.length > 0) {
-    lines.push('### Anticipated gaps (watch the classifier\'s `gaps[]` output for these)');
-    brief.anticipated_gaps.forEach((g) => lines.push(`- ${g}`));
+  if (brief.iteration_hints.length > 0) {
+    lines.push('### Iteration hints (harvest new terms from scrape extracts\' `## Follow-up signals`)');
+    for (const hint of brief.iteration_hints) lines.push(`- ${hint}`);
     lines.push('');
   }
 
-  if (brief.first_scrape_targets.length > 0) {
-    lines.push('### First-pass scrape targets (prioritize these in `scrape-links`)');
-    brief.first_scrape_targets.forEach((t) => lines.push(`- ${t}`));
+  if (brief.gaps_to_watch.length > 0) {
+    lines.push('### Gaps to watch');
+    for (const gap of brief.gaps_to_watch) lines.push(`- ${gap}`);
     lines.push('');
   }
 
-  if (brief.success_criteria.length > 0) {
-    lines.push('### Success criteria (do not declare done until all are verified)');
-    brief.success_criteria.forEach((c) => lines.push(`- ${c}`));
+  if (brief.stop_criteria.length > 0) {
+    lines.push('### Stop criteria');
+    for (const c of brief.stop_criteria) lines.push(`- ${c}`);
     lines.push('');
   }
 
   lines.push('---');
   lines.push('');
-  lines.push('Run all concept-group queries above in ONE `web-search` call, then loop per the discipline above.');
+  lines.push('Fire `first_call_sequence` now. After each `scrape-links`, harvest new terms from `## Follow-up signals` and build your next `web-search` round. Stop when every gap is closed.');
 
   return lines.join('\n');
 }
