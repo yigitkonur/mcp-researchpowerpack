@@ -98,7 +98,7 @@ src/
     jina.ts                  Jina Reader client (r.jina.ai) — turns PDF / DOCX /
                              PPTX / XLSX URLs into clean markdown
   tools/
-    registry.ts              registerAllTools() — wires 3 tools + 2 prompts + resources
+    registry.ts              registerAllTools() — wires 3 tools + resources
     start-research.ts        goal-tailored brief + static playbook + planner circuit-breaker
     search.ts                web-search handler (scope=web|reddit|both, CTR ranking, LLM tiering)
     scrape.ts                scrape-links handler (reddit + web + document branches in
@@ -113,9 +113,6 @@ src/
     start-research.ts
     web-search.ts
     scrape-links.ts
-  prompts/
-    deep-research.ts         Optional MCP prompt: deep-research
-    reddit-sentiment.ts      Optional MCP prompt: reddit-sentiment
   utils/
     errors.ts                StructuredError with code/retryable/statusCode,
                              classifyError pipeline, withStallProtection
@@ -319,7 +316,7 @@ Retryable statuses used by `withStallProtection` and retry utilities: `[408, 429
 ```bash
 pnpm typecheck   # tsc --noEmit, strict mode
 pnpm test:unit   # node:test across tests/*.test.ts
-pnpm test:http   # spawns server on :3000 and exercises tools/list, prompts, resources, schemas
+pnpm test:http   # spawns server on :3000 and exercises tools/list, resources, schemas
 ```
 
 All three must pass. Fix before pushing.

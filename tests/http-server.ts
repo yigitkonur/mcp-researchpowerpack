@@ -431,44 +431,7 @@ async function main(): Promise<void> {
       sessionId,
     ));
     const promptNames = promptsJson.result.prompts.map((prompt: { name: string }) => prompt.name).sort();
-    assert.deepEqual(promptNames, ['deep-research', 'reddit-sentiment']);
-
-    const deepResearchPromptJson = await readJsonRpcBody(await postJsonRpc(
-      baseUrl,
-      {
-        jsonrpc: '2.0',
-        id: 26,
-        method: 'prompts/get',
-        params: {
-          name: 'deep-research',
-          arguments: {
-            topic: 'oauth',
-          },
-        },
-      },
-      sessionId,
-    ));
-    assert.match(JSON.stringify(deepResearchPromptJson.result), /start-research/);
-    assert.match(JSON.stringify(deepResearchPromptJson.result), /oauth/);
-
-    const redditSentimentPromptJson = await readJsonRpcBody(await postJsonRpc(
-      baseUrl,
-      {
-        jsonrpc: '2.0',
-        id: 27,
-        method: 'prompts/get',
-        params: {
-          name: 'reddit-sentiment',
-          arguments: {
-            topic: 'oauth',
-            subreddits: 'typescript, openai',
-          },
-        },
-      },
-      sessionId,
-    ));
-    assert.match(JSON.stringify(redditSentimentPromptJson.result), /scrape-links/);
-    assert.match(JSON.stringify(redditSentimentPromptJson.result), /scope:\s*\\?"reddit\\?"/);
+    assert.deepEqual(promptNames, []);
 
     // --- Compliance: annotations + outputSchema ---
     const expectedAnnotationKeys = [

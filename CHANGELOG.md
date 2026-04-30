@@ -9,6 +9,13 @@ This server has a hosted deployment at `https://research.yigitkonur.com/mcp`.
 You can also install from npm or clone the repo and deploy it to your own
 infrastructure.
 
+## [6.0.14] - 2026-04-30
+
+### Removed
+
+- Removed the optional MCP prompts `deep-research` and `reddit-sentiment`.
+  The server now exposes the three research tools plus health resources only.
+
 ## [6.0.12] - 2026-04-30
 
 ### Fixed

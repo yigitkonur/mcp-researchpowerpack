@@ -14,7 +14,7 @@ Built on [mcp-use](https://github.com/nicepkg/mcp-use). No stdio, HTTP only.
 | `web-search` | parallel Google search, up to 50 queries per call, parallel-callable across turns. `scope: "web" \| "reddit" \| "both"` — reddit mode filters to post permalinks. Returns tiered markdown (HIGHLY_RELEVANT / MAYBE_RELEVANT / OTHER) + grounded synthesis + gaps + refine suggestions. | `SERPER_API_KEY` |
 | `scrape-links` | fetch URLs in parallel with per-URL LLM extraction. Auto-detects `reddit.com/r/.../comments/` permalinks and routes them through the Reddit API (threaded post + comments); PDF / DOCX / PPTX / XLSX URLs route through Jina Reader; non-reddit, non-document web URLs flow through Scrape.do. Parallel-callable. | `SCRAPEDO_API_KEY` for web URLs (+ `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` for reddit URLs; optional `JINA_API_KEY` for higher document limits) |
 
-Also exposes `/health`, `health://status`, and two optional MCP prompts: `deep-research` and `reddit-sentiment`.
+Also exposes `/health` and `health://status`.
 
 ## workflow
 
@@ -130,9 +130,8 @@ index.ts                 server startup, cors, health, shutdown
 src/
   config/                env parsing, capability detection, lazy proxy config
   clients/               provider API clients (serper, reddit, scrapedo, jina)
-  prompts/               optional MCP prompts for deep-research and reddit-sentiment
   tools/
-    registry.ts          registerAllTools() — wires 3 tools + 2 prompts
+    registry.ts          registerAllTools() — wires 3 tools
     start-research.ts    goal-tailored brief + static playbook
     search.ts            web-search handler (with CTR-weighted URL aggregation + LLM classification)
     scrape.ts            scrape-links handler (reddit + web + document branches in parallel)
